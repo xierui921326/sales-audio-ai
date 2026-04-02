@@ -1,0 +1,28 @@
+[package]
+name = "sales-audio-ai"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "sales_audio_ai_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "sales-audio-ai"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+base64 = "0.22"
+hound = "3.5"
+minimp3 = "0.5"

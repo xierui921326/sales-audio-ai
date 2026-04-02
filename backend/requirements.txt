@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+pydantic
+pydantic-settings
+httpx
+loguru
+edge-tts
+pydub
+python-dotenv
+openai
