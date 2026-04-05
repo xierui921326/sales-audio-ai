@@ -1,0 +1,52 @@
+.conversation-layout {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.generate-side-column {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.generate-form-card {
+  padding: 16px;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.generate-form-card__header {
+  margin-bottom: 16px;
+}
+
+.generate-form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.generate-form-textarea {
+  min-height: 80px;
+}
+
+.generate-form-submit,
+.generate-analysis-card__action {
+  width: 100%;
+}
+
+.generate-analysis-card {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.generate-analysis-card__footer {
+  padding: 16px;
+  border-top: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(249, 251, 255, 0.9), rgba(246, 249, 253, 0.95));
+}

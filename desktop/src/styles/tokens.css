@@ -1,0 +1,38 @@
+@import "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap";
+
+:root {
+  --bg: #eef3f9;
+  --surface: #ffffff;
+  --surface-soft: #f8fbff;
+  --surface-muted: #f4f7fb;
+  --border: #e2e8f1;
+  --border-strong: #d4deea;
+  --text-primary: #1f2a44;
+  --text-secondary: #5f6f87;
+  --text-muted: #8d9ab0;
+  --blue: #2f80ff;
+  --blue-dark: #1d68e0;
+  --blue-soft: #ecf4ff;
+  --green: #25b66a;
+  --green-soft: #ecfbf2;
+  --warning: #f2af2b;
+  --warning-soft: #fff7e6;
+  --danger: #e85d75;
+  --danger-soft: #fff1f1;
+  --shadow: 0 8px 24px rgba(31, 42, 68, 0.06);
+  --shadow-soft: 0 3px 10px rgba(31, 42, 68, 0.04);
+  --radius-xl: 20px;
+  --radius-lg: 16px;
+  --radius-md: 12px;
+  --radius-sm: 10px;
+  --radius-xs: 8px;
+
+  --bg-primary: var(--surface);
+  --bg-secondary: var(--surface-soft);
+  --bg-card: var(--surface-muted);
+  --accent: var(--blue);
+  --accent-light: var(--blue-dark);
+  --success: var(--green);
+  --sales-color: var(--blue);
+  --customer-color: var(--green);
+}
