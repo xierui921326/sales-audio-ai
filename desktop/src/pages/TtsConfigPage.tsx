@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React from 'react';
 import ConfigPlaceholder from '../components/config/ConfigPlaceholder';
+import ConfigSelect from '../components/config/ConfigSelect';
 import { AppConfig, TtsEndpointConfig } from '../types';
 
 const TTS_PRESETS = [
@@ -60,8 +61,6 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
     });
   }
 
-  const [presetOpen, setPresetOpen] = useState(false);
-
   const currentPreset =
     activeEndpoint &&
     (TTS_PRESETS.find(
@@ -118,55 +117,29 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
               <div className="config-section-header">
                 <div className="field-block config-section-header__field-block">
                   <label>预设服务商</label>
-                  <div
-                    className="preset-wrapper"
-                    onMouseEnter={() => setPresetOpen(true)}
-                    onMouseLeave={() => setPresetOpen(false)}
-                  >
-                    <button
-                      type="button"
-                      className={`preset-trigger ${presetOpen ? 'is-open' : ''}`}
-                      onClick={() => setPresetOpen(v => !v)}
-                    >
-                      <span className="preset-trigger__text">
-                        {currentPreset?.label || '自定义 (Custom)'}
-                      </span>
-                      <span className="preset-trigger__arrow" aria-hidden="true">
-                        <span className="icon-shape icon-shape--chevron" />
-                      </span>
-                    </button>
+                  <ConfigSelect
+                    value={currentPreset?.label || '自定义 (Custom)'}
+                    options={TTS_PRESETS.map(p => ({
+                      value: p.label,
+                      label: p.label,
+                    }))}
+                    onChange={(label) => {
+                      const preset = TTS_PRESETS.find(p => p.label === label);
+                      if (!preset) {
+                        return;
+                      }
 
-                    <div className="preset-menu" style={{ display: presetOpen ? 'block' : 'none' }}>
-                      {TTS_PRESETS.map(p => {
-                        const active =
-                          p.provider === currentPreset?.provider &&
-                          p.baseUrl === currentPreset?.baseUrl &&
-                          p.ttsModel === currentPreset?.ttsModel &&
-                          p.label === currentPreset?.label;
-
-                        return (
-                          <button
-                            key={p.label}
-                            type="button"
-                            className={`preset-menu__item ${active ? 'is-active' : ''}`}
-                            onMouseDown={() => {
-                              updateEndpoint(activeEndpoint.id, {
-                                title: p.label === '自定义 (Custom)' ? '新语音服务' : p.label,
-                                provider: p.provider,
-                                baseUrl: p.baseUrl,
-                                ttsModel: p.ttsModel,
-                                salesVoice: p.salesVoice,
-                                customerVoice: p.customerVoice,
-                              });
-                              setPresetOpen(false);
-                            }}
-                          >
-                            <span className="preset-menu__label">{p.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+                      updateEndpoint(activeEndpoint.id, {
+                        title: preset.label === '自定义 (Custom)' ? '新语音服务' : preset.label,
+                        provider: preset.provider,
+                        baseUrl: preset.baseUrl,
+                        ttsModel: preset.ttsModel,
+                        salesVoice: preset.salesVoice,
+                        customerVoice: preset.customerVoice,
+                      });
+                    }}
+                    placeholder="自定义 (Custom)"
+                  />
                 </div>
               </div>
 

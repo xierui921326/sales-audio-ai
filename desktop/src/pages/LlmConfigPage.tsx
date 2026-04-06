@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import ConfigPlaceholder from '../components/config/ConfigPlaceholder';
+import ConfigSelect from '../components/config/ConfigSelect';
 import { AppConfig, LlmEndpointConfig } from '../types';
 
 const LLM_PRESETS = [
@@ -23,8 +24,6 @@ interface LlmConfigPageProps {
 export default function LlmConfigPage({ config, setConfig, onSaveConfig, configSaveState }: LlmConfigPageProps) {
   const activeEndpoint = config.llmEndpoints.find((e) => e.id === config.activeLlmId);
   const [loadingModels, setLoadingModels] = useState(false);
-  const [presetOpen, setPresetOpen] = useState(false);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [modelOptionsByEndpoint, setModelOptionsByEndpoint] = useState<Record<string, string[]>>({});
   const [modelFetchDialog, setModelFetchDialog] = useState<{
     tone: 'success' | 'error' | 'info';
@@ -99,7 +98,6 @@ export default function LlmConfigPage({ config, setConfig, onSaveConfig, configS
       if (uniq.length > 0) {
         const nextModel = uniq.includes(activeEndpoint.model) ? activeEndpoint.model : uniq[0];
         updateEndpoint(activeEndpoint.id, { model: nextModel });
-        setModelMenuOpen(true);
         setModelFetchDialog({
           tone: 'success',
           title: '获取成功',
@@ -107,7 +105,6 @@ export default function LlmConfigPage({ config, setConfig, onSaveConfig, configS
           mode: 'result',
         });
       } else {
-        setModelMenuOpen(false);
         setModelFetchDialog({
           tone: 'error',
           title: '未返回可用模型',
@@ -122,7 +119,6 @@ export default function LlmConfigPage({ config, setConfig, onSaveConfig, configS
           ? `当前供应商暂不兼容标准 /models 接口，或返回格式不符合预期。\n\n详细信息：${message}`
           : message;
 
-      setModelMenuOpen(false);
       setModelFetchDialog({
         tone: 'error',
         title: '获取失败',
@@ -148,12 +144,10 @@ export default function LlmConfigPage({ config, setConfig, onSaveConfig, configS
   useEffect(() => {
     if (!activeEndpoint) {
       setModelFetchDialog(null);
-      setModelMenuOpen(false);
       return;
     }
 
     setModelFetchDialog(null);
-    setModelMenuOpen(false);
   }, [activeEndpoint?.id]);
 
   function addEndpoint() {
@@ -217,55 +211,28 @@ export default function LlmConfigPage({ config, setConfig, onSaveConfig, configS
               <div className="config-section-header">
                 <div className="field-block config-section-header__field-block">
                   <label>预设供应商</label>
-                  <div
-                    className="preset-wrapper"
-                    onMouseEnter={() => setPresetOpen(true)}
-                    onMouseLeave={() => setPresetOpen(false)}
-                  >
-                    <button
-                      type="button"
-                      className={`preset-trigger ${presetOpen ? 'is-open' : ''}`}
-                      onClick={() => setPresetOpen(v => !v)}
-                    >
-                      <span className="preset-trigger__text">
-                        {currentPreset?.label || '自定义 (Custom)'}
-                      </span>
-                      <span className="preset-trigger__arrow" aria-hidden="true">
-                        <span className="icon-shape icon-shape--chevron" />
-                      </span>
-                    </button>
+                  <ConfigSelect
+                    value={currentPreset?.label || '自定义 (Custom)'}
+                    options={LLM_PRESETS.map(p => ({
+                      value: p.label,
+                      label: p.label,
+                    }))}
+                    onChange={(label) => {
+                      const preset = LLM_PRESETS.find(p => p.label === label);
+                      if (!preset) {
+                        return;
+                      }
 
-                    <div className="preset-menu" style={{ display: presetOpen ? 'block' : 'none' }}>
-                      {LLM_PRESETS.map(p => {
-                        const active =
-                          p.provider === currentPreset?.provider &&
-                          p.baseUrl === currentPreset?.baseUrl &&
-                          p.model === currentPreset?.model &&
-                          p.label === currentPreset?.label;
-
-                        return (
-                          <button
-                            key={p.label}
-                            type="button"
-                            className={`preset-menu__item ${active ? 'is-active' : ''}`}
-                            onMouseDown={() => {
-                              updateEndpoint(activeEndpoint.id, {
-                                title: p.label === '自定义 (Custom)' ? '新接入点' : p.label,
-                                provider: p.provider,
-                                baseUrl: p.baseUrl,
-                                model: p.model,
-                              });
-                              setModelFetchDialog(null);
-                              setModelMenuOpen(false);
-                              setPresetOpen(false);
-                            }}
-                          >
-                            <span className="preset-menu__label">{p.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
+                      updateEndpoint(activeEndpoint.id, {
+                        title: preset.label === '自定义 (Custom)' ? '新接入点' : preset.label,
+                        provider: preset.provider,
+                        baseUrl: preset.baseUrl,
+                        model: preset.model,
+                      });
+                      setModelFetchDialog(null);
+                    }}
+                    placeholder="自定义 (Custom)"
+                  />
                 </div>
               </div>
 
@@ -325,43 +292,17 @@ export default function LlmConfigPage({ config, setConfig, onSaveConfig, configS
                       </button>
                     </div>
                     {modelOptions.length > 0 ? (
-                      <div
-                        className="preset-wrapper"
-                        onMouseEnter={() => setModelMenuOpen(true)}
-                        onMouseLeave={() => setModelMenuOpen(false)}
-                      >
-                        <button
-                          type="button"
-                          className={`preset-trigger ${modelMenuOpen ? 'is-open' : ''}`}
-                          onClick={() => setModelMenuOpen(v => !v)}
-                        >
-                          <span className="preset-trigger__text">
-                            {activeEndpoint.model || '请选择模型'}
-                          </span>
-                          <span className="preset-trigger__arrow" aria-hidden="true">
-                            <span className="icon-shape icon-shape--chevron" />
-                          </span>
-                        </button>
-
-                        <div className="preset-menu" style={{ display: modelMenuOpen ? 'block' : 'none' }}>
-                          {modelOptions.map(m => {
-                            const active = m === activeEndpoint.model;
-                            return (
-                              <button
-                                key={m}
-                                type="button"
-                                className={`preset-menu__item ${active ? 'is-active' : ''}`}
-                                onMouseDown={() => {
-                                  updateEndpoint(activeEndpoint.id, { model: m });
-                                  setModelMenuOpen(false);
-                                }}
-                              >
-                                <span className="preset-menu__label">{m}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
+                      <ConfigSelect
+                        value={activeEndpoint.model}
+                        options={modelOptions.map(m => ({
+                          value: m,
+                          label: m,
+                        }))}
+                        onChange={(model) => {
+                          updateEndpoint(activeEndpoint.id, { model });
+                        }}
+                        placeholder="请选择模型"
+                      />
                     ) : (
                       <input
                         className="field-control"
