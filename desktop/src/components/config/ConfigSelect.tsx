@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 export interface ConfigSelectOption {
   value: string;
@@ -17,6 +18,12 @@ interface ConfigSelectProps {
   renderOption?: (option: ConfigSelectOption, state: { selected: boolean }) => React.ReactNode;
 }
 
+interface MenuPosition {
+  top: number;
+  left: number;
+  width: number;
+}
+
 export default function ConfigSelect({
   value,
   options,
@@ -28,7 +35,10 @@ export default function ConfigSelect({
   renderOption,
 }: ConfigSelectProps) {
   const [open, setOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   const selectedOption = useMemo(
     () => options.find(option => option.value === value),
@@ -36,9 +46,25 @@ export default function ConfigSelect({
   );
 
   useEffect(() => {
+    function updateMenuPosition() {
+      if (!triggerRef.current) {
+        return;
+      }
+
+      const rect = triggerRef.current.getBoundingClientRect();
+      setMenuPosition({
+        top: rect.bottom + 6,
+        left: rect.left,
+        width: rect.width,
+      });
+    }
+
     function handlePointerDown(event: MouseEvent) {
       const target = event.target as Node;
-      if (wrapperRef.current && !wrapperRef.current.contains(target)) {
+      const clickedTriggerArea = wrapperRef.current?.contains(target);
+      const clickedMenu = menuRef.current?.contains(target);
+
+      if (!clickedTriggerArea && !clickedMenu) {
         setOpen(false);
       }
     }
@@ -52,15 +78,24 @@ export default function ConfigSelect({
     document.addEventListener('mousedown', handlePointerDown);
     document.addEventListener('keydown', handleKeyDown);
 
+    if (open) {
+      updateMenuPosition();
+      window.addEventListener('resize', updateMenuPosition);
+      window.addEventListener('scroll', updateMenuPosition, true);
+    }
+
     return () => {
       document.removeEventListener('mousedown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('resize', updateMenuPosition);
+      window.removeEventListener('scroll', updateMenuPosition, true);
     };
-  }, []);
+  }, [open]);
 
   return (
     <div className={className ? `preset-wrapper ${className}` : 'preset-wrapper'} ref={wrapperRef}>
       <button
+        ref={triggerRef}
         type="button"
         className={`preset-trigger ${open ? 'is-open' : ''}`}
         onClick={() => {
@@ -78,8 +113,17 @@ export default function ConfigSelect({
         </span>
       </button>
 
-      {open ? (
-        <div className="preset-menu">
+      {open && menuPosition ? createPortal(
+        <div
+          ref={menuRef}
+          className="preset-menu"
+          style={{
+            position: 'fixed',
+            top: `${menuPosition.top}px`,
+            left: `${menuPosition.left}px`,
+            width: `${menuPosition.width}px`,
+          }}
+        >
           {options.map(option => {
             const selected = option.value === value;
             return (
@@ -104,7 +148,8 @@ export default function ConfigSelect({
               </button>
             );
           })}
-        </div>
+        </div>,
+        document.body
       ) : null}
     </div>
   );

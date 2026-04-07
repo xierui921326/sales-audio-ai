@@ -117,15 +117,6 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
       return;
     }
 
-    if (!isEdgePreset && !activeEndpoint.apiKey.trim()) {
-      setSaveDialog({
-        tone: 'error',
-        title: '缺少 API Key',
-        text: '当前 TTS 服务需要 API Key，请先填写后再保存。',
-      });
-      return;
-    }
-
     if (!isEdgePreset && !activeEndpoint.baseUrl.trim()) {
       setSaveDialog({
         tone: 'error',
