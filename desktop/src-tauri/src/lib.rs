@@ -765,74 +765,6 @@ fn extract_json_block(content: &str) -> Option<String> {
     Some(fenced[start..=end].to_string())
 }
 
-fn fallback_conversation(input: &GenerateConversationInput) -> GenerateConversationOutput {
-    let rounds = input.rounds.max(2).min(12);
-    let mut transcript = Vec::new();
-    let scenario = input.scenario.trim();
-    let supplemental_prompt = input
-        .supplemental_prompt
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("");
-
-    for idx in 0..rounds {
-        let sales_id = (idx * 2 + 1).to_string();
-        let customer_id = (idx * 2 + 2).to_string();
-        let start = idx * 8;
-        transcript.push(TranscriptSegment {
-            id: sales_id,
-            speaker: "sales".into(),
-            text: if idx == 0 && !supplemental_prompt.is_empty() {
-                format!(
-                    "您好，关于“{}”，我想重点结合“{}”和您交流一下，看看是否方便继续沟通。",
-                    scenario, supplemental_prompt
-                )
-            } else {
-                format!("您好，关于“{}”，想先了解一下您目前最关注的点是什么？", scenario)
-            },
-            start_time: start,
-            end_time: start + 4,
-            keywords: Some(vec![scenario.to_string()]),
-        });
-        transcript.push(TranscriptSegment {
-            id: customer_id,
-            speaker: "customer".into(),
-            text: if idx == 0 {
-                "我现在还在考虑，想先看看值不值得继续了解。".into()
-            } else if !supplemental_prompt.is_empty() && idx == rounds - 1 {
-                format!("如果你提到的方案能兼顾{}，我愿意再详细听听。", supplemental_prompt)
-            } else {
-                "可以，你继续说说看。".into()
-            },
-            start_time: start + 4,
-            end_time: start + 8,
-            keywords: Some(vec![scenario.to_string()]),
-        });
-    }
-
-    GenerateConversationOutput {
-        transcript,
-        task_info: vec![
-            TaskMetaItem {
-                label: "任务 ID".into(),
-                value: format!("task-{}-{}", scenario, rounds),
-                tone: Some("neutral".into()),
-            },
-            TaskMetaItem {
-                label: "生成时间".into(),
-                value: now_text(),
-                tone: Some("neutral".into()),
-            },
-            TaskMetaItem {
-                label: "状态".into(),
-                value: "对话已生成".into(),
-                tone: Some("success".into()),
-            },
-        ],
-    }
-}
-
 
 async fn call_remote_llm(config: &AppConfig, input: &GenerateConversationInput) -> Result<GenerateConversationOutput, String> {
     let requested_endpoint_id = input.llm_endpoint_id.as_deref().map(str::trim).filter(|id| !id.is_empty());
@@ -1159,10 +1091,7 @@ fn save_tasks(app: AppHandle, tasks: Vec<BatchTaskItem>) -> Result<Vec<BatchTask
 #[tauri::command]
 async fn generate_conversation(app: AppHandle, input: GenerateConversationInput) -> Result<GenerateConversationOutput, String> {
     let workspace = ensure_workspace(&app)?;
-    match call_remote_llm(&workspace.config, &input).await {
-        Ok(result) => Ok(result),
-        Err(_) => Ok(fallback_conversation(&input)),
-    }
+    call_remote_llm(&workspace.config, &input).await
 }
 
 #[tauri::command]

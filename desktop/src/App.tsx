@@ -29,7 +29,11 @@ const DEFAULT_CONFIG: AppConfig = {
   fallbackModel: 'gpt-4o-mini',
 };
 
-
+type GenerateDialogState = {
+  title: string;
+  text: string;
+  tone: 'error' | 'info' | 'success';
+} | null;
 
 // Main App Component
 export default function App() {
@@ -42,6 +46,7 @@ export default function App() {
   const [configSaveState, setConfigSaveState] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const [configLoaded, setConfigLoaded] = useState(false);
   const [savedConfigSnapshot, setSavedConfigSnapshot] = useState<AppConfig>(DEFAULT_CONFIG);
+  const [generateDialog, setGenerateDialog] = useState<GenerateDialogState>(null);
 
   // Lifecycle
   useEffect(() => {
@@ -87,12 +92,18 @@ export default function App() {
   // Actions
   async function handleGenerateConversation(params: GenerateConversationInput) {
     setBusy(true);
+    setGenerateDialog(null);
     setTranscript([]);
     try {
       const result = await invoke<GenerateConversationOutput>('generate_conversation', { input: params });
       setTranscript(result.transcript);
     } catch (err) {
       console.error(err);
+      setGenerateDialog({
+        title: '生成失败',
+        text: err instanceof Error ? err.message : String(err),
+        tone: 'error',
+      });
     } finally {
       setBusy(false);
     }
@@ -121,30 +132,49 @@ export default function App() {
   const ttsSupplierLocked = savedConfigSnapshot.ttsEndpoints.some(e => e.id === config.activeTtsId);
 
   return (
-    <div className="app-shell">
-      <Sidebar activeNav={activeNav} onNavChange={setActiveNav} />
-      <div className="workspace-shell">
-        <main className="workspace-main">
-          <MainContent
-            activeNav={activeNav}
-            config={config}
-            setConfig={setConfig}
-            transcript={transcript}
-            audioFiles={audioFiles}
-            playingId={playingId}
-            onPlay={handlePlay}
-            onGenerateConv={handleGenerateConversation}
-            onGenerateAudio={handleGenerateAudio}
-            onSaveConfig={handleSaveConfig}
-            configSaveState={configSaveState}
-            hasUnsavedChanges={hasUnsavedChanges}
-            llmSupplierLocked={llmSupplierLocked}
-            ttsSupplierLocked={ttsSupplierLocked}
-            busy={busy}
-          />
-        </main>
+    <>
+      <div className="app-shell">
+        <Sidebar activeNav={activeNav} onNavChange={setActiveNav} />
+        <div className="workspace-shell">
+          <main className="workspace-main">
+            <MainContent
+              activeNav={activeNav}
+              config={config}
+              setConfig={setConfig}
+              transcript={transcript}
+              audioFiles={audioFiles}
+              playingId={playingId}
+              onPlay={handlePlay}
+              onGenerateConv={handleGenerateConversation}
+              onGenerateAudio={handleGenerateAudio}
+              onSaveConfig={handleSaveConfig}
+              configSaveState={configSaveState}
+              hasUnsavedChanges={hasUnsavedChanges}
+              llmSupplierLocked={llmSupplierLocked}
+              ttsSupplierLocked={ttsSupplierLocked}
+              busy={busy}
+            />
+          </main>
+        </div>
       </div>
-    </div>
+
+      {generateDialog ? (
+        <div className="dialog-overlay" onClick={() => setGenerateDialog(null)}>
+          <div className="dialog-card" onClick={e => e.stopPropagation()}>
+            <div className={`dialog-badge dialog-badge--${generateDialog.tone}`}>
+              {generateDialog.tone === 'success' ? '成功' : generateDialog.tone === 'info' ? '提示' : '错误'}
+            </div>
+            <div className="dialog-title">{generateDialog.title}</div>
+            <div className="dialog-text">{generateDialog.text}</div>
+            <div className="dialog-actions">
+              <button className="chip-button is-active" onClick={() => setGenerateDialog(null)} type="button">
+                我知道了
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
 
