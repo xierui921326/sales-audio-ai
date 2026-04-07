@@ -19,9 +19,11 @@ interface LlmConfigPageProps {
   setConfig: React.Dispatch<React.SetStateAction<AppConfig>>;
   onSaveConfig: () => Promise<void>;
   configSaveState: 'idle' | 'saving' | 'success' | 'error';
+  hasUnsavedChanges: boolean;
+  supplierLocked: boolean;
 }
 
-export default function LlmConfigPage({ config, setConfig, onSaveConfig, configSaveState }: LlmConfigPageProps) {
+export default function LlmConfigPage({ config, setConfig, onSaveConfig, configSaveState, hasUnsavedChanges, supplierLocked }: LlmConfigPageProps) {
   const activeEndpoint = config.llmEndpoints.find((e) => e.id === config.activeLlmId);
   const [loadingModels, setLoadingModels] = useState(false);
   const [modelOptionsByEndpoint, setModelOptionsByEndpoint] = useState<Record<string, string[]>>({});
@@ -232,27 +234,25 @@ export default function LlmConfigPage({ config, setConfig, onSaveConfig, configS
                       setModelFetchDialog(null);
                     }}
                     placeholder="自定义 (Custom)"
+                    disabled={supplierLocked}
                   />
+                  {supplierLocked ? (
+                    <div className="field-helper-text">当前端点已保存，供应商不可更改；如需切换，请新增配置。</div>
+                  ) : null}
                 </div>
               </div>
 
               <div className="config-form-stack">
                 <div className="group-card">
-                  <div className="config-grid-2">
-                    <div className="field-block">
-                      <label>供应商名称</label>
-                      <input
-                        className="field-control"
-                        value={activeEndpoint.title}
-                        disabled={isTitleLocked}
-                        onChange={e => updateEndpoint(activeEndpoint.id, { title: e.target.value })}
-                        placeholder="例如：OpenAI 官方"
-                      />
-                    </div>
-                    <div className="field-block">
-                      <label>备注</label>
-                      <input className="field-control" placeholder="例如：生产环境专用 Key" />
-                    </div>
+                  <div className="field-block">
+                    <label>供应商名称</label>
+                    <input
+                      className="field-control"
+                      value={activeEndpoint.title}
+                      disabled={isTitleLocked}
+                      onChange={e => updateEndpoint(activeEndpoint.id, { title: e.target.value })}
+                      placeholder="例如：OpenAI 官方"
+                    />
                   </div>
                 </div>
 
@@ -316,7 +316,7 @@ export default function LlmConfigPage({ config, setConfig, onSaveConfig, configS
 
                 <div className="config-save-row">
                   <button className="btn-save" onClick={onSaveConfig} disabled={configSaveState === 'saving'} type="button">
-                    {configSaveState === 'saving' ? '保存中...' : configSaveState === 'success' ? '已保存' : configSaveState === 'error' ? '保存失败，请重试' : '保存配置'}
+                    {configSaveState === 'saving' ? '保存中...' : configSaveState === 'error' ? '保存失败，请重试' : configSaveState === 'success' && !hasUnsavedChanges ? '已保存' : '保存配置'}
                   </button>
                 </div>
               </div>

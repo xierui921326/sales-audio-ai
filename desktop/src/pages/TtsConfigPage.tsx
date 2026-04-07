@@ -1,13 +1,19 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import ConfigPlaceholder from '../components/config/ConfigPlaceholder';
 import ConfigSelect from '../components/config/ConfigSelect';
 import { AppConfig, TtsEndpointConfig } from '../types';
 
+const EDGE_TTS_VOICE_OPTIONS = [
+  { value: 'zh-CN-XiaoxiaoNeural', label: 'zh-CN-XiaoxiaoNeural（男声）' },
+  { value: 'zh-CN-YunjianNeural', label: 'zh-CN-YunjianNeural（女声）' },
+  { value: 'zh-CN-liaoning-XiaobeiNeural', label: 'zh-CN-liaoning-XiaobeiNeural（男声）' },
+  { value: 'zh-CN-shaanxi-XiaoniNeural', label: 'zh-CN-shaanxi-XiaoniNeural（男声）' },
+] as const;
+
 const TTS_PRESETS = [
-  { label: 'Edge TTS (免费)', provider: 'edge', ttsModel: 'edge-local', baseUrl: '', salesVoice: 'zh-CN-YunxiNeural', customerVoice: 'zh-CN-XiaoxiaoNeural' },
-  { label: 'OpenAI TTS', provider: 'openai', ttsModel: 'tts-1', baseUrl: 'https://api.openai.com/v1', salesVoice: 'alloy', customerVoice: 'nova' },
-  { label: '火山引擎 (ByteDance)', provider: 'volc', ttsModel: '', baseUrl: '', salesVoice: 'zh_female_shuangma_base_24k', customerVoice: 'zh_male_yaoguang_base_24k' },
-  { label: '自定义 (Custom)', provider: 'custom', ttsModel: '', baseUrl: '', salesVoice: '', customerVoice: '' },
+  { label: 'Edge TTS (免费)', provider: 'edge', ttsModel: 'edge-local', baseUrl: '', salesVoice: 'zh-CN-XiaoxiaoNeural', customerVoice: 'zh-CN-YunjianNeural' },
+  { label: '千问 TTS', provider: 'qwen', ttsModel: 'qwen-tts', baseUrl: 'http://localhost:8000', salesVoice: '', customerVoice: '' },
 ] as const;
 
 interface TtsConfigPageProps {
@@ -15,13 +21,126 @@ interface TtsConfigPageProps {
   setConfig: React.Dispatch<React.SetStateAction<AppConfig>>;
   onSaveConfig: () => Promise<void>;
   configSaveState: 'idle' | 'saving' | 'success' | 'error';
+  hasUnsavedChanges: boolean;
+  supplierLocked: boolean;
 }
 
-export default function TtsConfigPage({ config, setConfig, onSaveConfig, configSaveState }: TtsConfigPageProps) {
+export default function TtsConfigPage({ config, setConfig, onSaveConfig, configSaveState, hasUnsavedChanges, supplierLocked }: TtsConfigPageProps) {
   const activeEndpoint = config.ttsEndpoints.find((e) => e.id === config.activeTtsId);
+  const [loadingVoices, setLoadingVoices] = useState(false);
+  const [voiceOptionsByEndpoint, setVoiceOptionsByEndpoint] = useState<Record<string, string[]>>({});
+  const [saveDialog, setSaveDialog] = useState<{
+    tone: 'error' | 'info';
+    title: string;
+    text: string;
+  } | null>(null);
+  const isEdgePreset = activeEndpoint?.provider === 'edge';
+  const isQwenPreset = activeEndpoint?.provider === 'qwen';
+  const edgeVoiceOptions = useMemo(() => EDGE_TTS_VOICE_OPTIONS.map(option => ({
+    value: option.value,
+    label: option.label,
+  })), []);
+  const qwenVoiceOptions = useMemo(() => {
+    if (!activeEndpoint) {
+      return [];
+    }
+
+    return (voiceOptionsByEndpoint[activeEndpoint.id] ?? []).map(voice => ({
+      value: voice,
+      label: voice,
+    }));
+  }, [activeEndpoint, voiceOptionsByEndpoint]);
+
+  async function fetchVoices() {
+    if (!activeEndpoint || !isQwenPreset) {
+      return;
+    }
+
+    setLoadingVoices(true);
+    try {
+      const options = await invoke<Array<{ label: string; value: string }>>('list_tts_voices', { config });
+      const voices = Array.isArray(options) ? options.map(option => option?.value || option?.label).filter(Boolean) : [];
+      const uniq = Array.from(new Set(voices));
+
+      setVoiceOptionsByEndpoint(prev => ({
+        ...prev,
+        [activeEndpoint.id]: uniq,
+      }));
+
+      if (uniq.length > 0) {
+        updateEndpoint(activeEndpoint.id, {
+          salesVoice: uniq.includes(activeEndpoint.salesVoice) ? activeEndpoint.salesVoice : uniq[0],
+          customerVoice: uniq.includes(activeEndpoint.customerVoice) ? activeEndpoint.customerVoice : uniq[0],
+        });
+      }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoadingVoices(false);
+    }
+  }
+
+  async function handleSave() {
+    if (!activeEndpoint) {
+      setSaveDialog({
+        tone: 'error',
+        title: '缺少配置',
+        text: '请先选择一个 TTS 配置，再执行保存。',
+      });
+      return;
+    }
+
+    if (!activeEndpoint.salesVoice.trim()) {
+      setSaveDialog({
+        tone: 'error',
+        title: '缺少销售角色音色',
+        text: '请先填写或选择销售角色音色 ID。',
+      });
+      return;
+    }
+
+    if (!activeEndpoint.customerVoice.trim()) {
+      setSaveDialog({
+        tone: 'error',
+        title: '缺少客户角色音色',
+        text: '请先填写或选择客户角色音色 ID。',
+      });
+      return;
+    }
+
+    if (activeEndpoint.salesVoice === activeEndpoint.customerVoice) {
+      setSaveDialog({
+        tone: 'error',
+        title: '角色音色不能相同',
+        text: '销售角色和客户角色必须使用不同的音色，请重新选择。',
+      });
+      return;
+    }
+
+    if (!isEdgePreset && !activeEndpoint.apiKey.trim()) {
+      setSaveDialog({
+        tone: 'error',
+        title: '缺少 API Key',
+        text: '当前 TTS 服务需要 API Key，请先填写后再保存。',
+      });
+      return;
+    }
+
+    if (!isEdgePreset && !activeEndpoint.baseUrl.trim()) {
+      setSaveDialog({
+        tone: 'error',
+        title: '缺少 Base URL',
+        text: '当前 TTS 服务需要 Base URL，请先填写后再保存。',
+      });
+      return;
+    }
+
+    await onSaveConfig();
+  }
 
   function setActiveTtsId(id: string) {
     setConfig((prev) => ({ ...prev, activeTtsId: id }));
+    setSaveDialog(null);
   }
 
   function updateEndpoint(id: string, partial: Partial<TtsEndpointConfig>) {
@@ -29,6 +148,7 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
       ...prev,
       ttsEndpoints: prev.ttsEndpoints.map(e => e.id === id ? { ...e, ...partial } : e),
     }));
+    setSaveDialog(null);
   }
 
   function addEndpoint() {
@@ -40,14 +160,15 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
       apiKey: '',
       baseUrl: '',
       ttsModel: 'edge-local',
-      salesVoice: 'zh-CN-YunxiNeural',
-      customerVoice: 'zh-CN-XiaoxiaoNeural',
+      salesVoice: 'zh-CN-XiaoxiaoNeural',
+      customerVoice: 'zh-CN-YunjianNeural',
     };
     setConfig((prev) => ({
       ...prev,
       ttsEndpoints: [...prev.ttsEndpoints, newEp],
       activeTtsId: newId,
     }));
+    setSaveDialog(null);
   }
 
   function deleteEndpoint(id: string) {
@@ -59,6 +180,7 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
         activeTtsId: prev.activeTtsId === id ? (next.length > 0 ? next[0].id : '') : prev.activeTtsId,
       };
     });
+    setSaveDialog(null);
   }
 
   const currentPreset =
@@ -68,7 +190,7 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
         p.provider === activeEndpoint.provider &&
         p.baseUrl === activeEndpoint.baseUrl &&
         p.ttsModel === activeEndpoint.ttsModel
-    ) || TTS_PRESETS.find(p => p.label === '自定义 (Custom)'));
+    ) || TTS_PRESETS[0]);
 
   const isTitleLocked =
     !!activeEndpoint &&
@@ -76,13 +198,10 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
       p =>
         p.provider === activeEndpoint.provider &&
         p.baseUrl === activeEndpoint.baseUrl &&
-        p.ttsModel === activeEndpoint.ttsModel &&
-        p.label !== '自定义 (Custom)'
+        p.ttsModel === activeEndpoint.ttsModel
     );
 
-  const allowBaseUrlEdit =
-    !!activeEndpoint &&
-    (!!currentPreset && currentPreset.label === '自定义 (Custom)');
+  const allowBaseUrlEdit = !!activeEndpoint && !isEdgePreset;
 
   return (
     <div className="layout-split animate-slide-up">
@@ -118,7 +237,7 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
                 <div className="field-block config-section-header__field-block">
                   <label>预设服务商</label>
                   <ConfigSelect
-                    value={currentPreset?.label || '自定义 (Custom)'}
+                    value={currentPreset?.label || 'Edge TTS (免费)'}
                     options={TTS_PRESETS.map(p => ({
                       value: p.label,
                       label: p.label,
@@ -130,7 +249,7 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
                       }
 
                       updateEndpoint(activeEndpoint.id, {
-                        title: preset.label === '自定义 (Custom)' ? '新语音服务' : preset.label,
+                        title: preset.label,
                         provider: preset.provider,
                         baseUrl: preset.baseUrl,
                         ttsModel: preset.ttsModel,
@@ -138,91 +257,125 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
                         customerVoice: preset.customerVoice,
                       });
                     }}
-                    placeholder="自定义 (Custom)"
+                    placeholder="请选择服务商"
+                    disabled={supplierLocked}
                   />
+                  {supplierLocked ? (
+                    <div className="field-helper-text">当前端点已保存，供应商不可更改；如需切换，请新增配置。</div>
+                  ) : null}
                 </div>
               </div>
 
               <div className="config-form-stack">
                 <div className="group-card">
-                  <div className="config-grid-2">
-                    <div className="field-block">
-                      <label>服务名称</label>
-                      <input
-                        className="field-control"
-                        value={activeEndpoint.title}
-                        disabled={isTitleLocked}
-                        onChange={e => updateEndpoint(activeEndpoint.id, { title: e.target.value })}
-                        placeholder="例如：Edge TTS 本地"
-                      />
-                    </div>
-                    <div className="field-block">
-                      <label>备注</label>
-                      <input className="field-control" placeholder="例如：测试环境" />
-                    </div>
+                  <div className="field-block">
+                    <label>服务名称</label>
+                    <input
+                      className="field-control"
+                      value={activeEndpoint.title}
+                      disabled={isTitleLocked}
+                      onChange={e => updateEndpoint(activeEndpoint.id, { title: e.target.value })}
+                      placeholder="例如：Edge TTS 本地"
+                    />
                   </div>
                 </div>
 
-                <div className="group-card config-form-stack__group-card">
-                  <div className="config-grid-2">
-                    <div className="field-block">
-                      <label>API Key (可选)</label>
-                      <input
-                        className="field-control"
-                        type="password"
-                        value={activeEndpoint.apiKey}
-                        onChange={e => updateEndpoint(activeEndpoint.id, { apiKey: e.target.value })}
-                        placeholder="sk-..."
-                      />
-                    </div>
-                    <div className="field-block">
-                      <label>Base URL / 接入点</label>
-                      <input
-                        className="field-control"
-                        value={activeEndpoint.baseUrl}
-                        disabled={!allowBaseUrlEdit}
-                        onChange={e => updateEndpoint(activeEndpoint.id, { baseUrl: e.target.value })}
-                        placeholder="https://..."
-                      />
+                {!isEdgePreset ? (
+                  <div className="group-card config-form-stack__group-card">
+                    <div className="config-grid-2">
+                      <div className="field-block">
+                        <label>API Key</label>
+                        <input
+                          className="field-control"
+                          type="password"
+                          value={activeEndpoint.apiKey}
+                          onChange={e => updateEndpoint(activeEndpoint.id, { apiKey: e.target.value })}
+                          placeholder="sk-..."
+                        />
+                      </div>
+                      <div className="field-block">
+                        <label>Base URL / 接入点</label>
+                        <input
+                          className="field-control"
+                          value={activeEndpoint.baseUrl}
+                          disabled={!allowBaseUrlEdit}
+                          onChange={e => updateEndpoint(activeEndpoint.id, { baseUrl: e.target.value })}
+                          placeholder="https://..."
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
+                ) : null}
 
                 <div className="group-card config-form-stack__group-card">
                   <div className="field-inline-header">
                     <div className="group-card__title group-card__title--tight">角色配音设定</div>
-                    <button
-                      className="chip-button strong-secondary compact-chip-button"
-                      type="button"
-                      onClick={() => {}}
-                      disabled={false}
-                    >
-                      获取音色
-                    </button>
+                    {isQwenPreset ? (
+                      <button
+                        className="chip-button strong-secondary compact-chip-button"
+                        type="button"
+                        onClick={fetchVoices}
+                        disabled={loadingVoices}
+                      >
+                        {loadingVoices ? '获取中…' : '获取音色'}
+                      </button>
+                    ) : null}
                   </div>
                   <div className="config-grid-2">
                     <div className="field-block">
                       <label>销售角色音色 ID</label>
-                      <input
-                        className="field-control"
-                        value={activeEndpoint.salesVoice}
-                        onChange={e => updateEndpoint(activeEndpoint.id, { salesVoice: e.target.value })}
-                      />
+                      {isEdgePreset ? (
+                        <ConfigSelect
+                          value={activeEndpoint.salesVoice}
+                          options={edgeVoiceOptions}
+                          onChange={(salesVoice) => updateEndpoint(activeEndpoint.id, { salesVoice })}
+                          placeholder="请选择音色"
+                        />
+                      ) : isQwenPreset && qwenVoiceOptions.length > 0 ? (
+                        <ConfigSelect
+                          value={activeEndpoint.salesVoice}
+                          options={qwenVoiceOptions}
+                          onChange={(salesVoice) => updateEndpoint(activeEndpoint.id, { salesVoice })}
+                          placeholder="请选择音色"
+                        />
+                      ) : (
+                        <input
+                          className="field-control"
+                          value={activeEndpoint.salesVoice}
+                          onChange={e => updateEndpoint(activeEndpoint.id, { salesVoice: e.target.value })}
+                        />
+                      )}
                     </div>
                     <div className="field-block">
                       <label>客户角色音色 ID</label>
-                      <input
-                        className="field-control"
-                        value={activeEndpoint.customerVoice}
-                        onChange={e => updateEndpoint(activeEndpoint.id, { customerVoice: e.target.value })}
-                      />
+                      {isEdgePreset ? (
+                        <ConfigSelect
+                          value={activeEndpoint.customerVoice}
+                          options={edgeVoiceOptions}
+                          onChange={(customerVoice) => updateEndpoint(activeEndpoint.id, { customerVoice })}
+                          placeholder="请选择音色"
+                        />
+                      ) : isQwenPreset && qwenVoiceOptions.length > 0 ? (
+                        <ConfigSelect
+                          value={activeEndpoint.customerVoice}
+                          options={qwenVoiceOptions}
+                          onChange={(customerVoice) => updateEndpoint(activeEndpoint.id, { customerVoice })}
+                          placeholder="请选择音色"
+                        />
+                      ) : (
+                        <input
+                          className="field-control"
+                          value={activeEndpoint.customerVoice}
+                          onChange={e => updateEndpoint(activeEndpoint.id, { customerVoice: e.target.value })}
+                        />
+                      )}
                     </div>
                   </div>
                 </div>
 
                 <div className="config-save-row">
-                  <button className="btn-save" onClick={onSaveConfig} disabled={configSaveState === 'saving'} type="button">
-                    {configSaveState === 'saving' ? '保存中...' : configSaveState === 'success' ? '已保存' : configSaveState === 'error' ? '保存失败，请重试' : '保存配置'}
+                  <button className="btn-save" onClick={handleSave} disabled={configSaveState === 'saving'} type="button">
+                    {configSaveState === 'saving' ? '保存中...' : configSaveState === 'error' ? '保存失败，请重试' : configSaveState === 'success' && !hasUnsavedChanges ? '已保存' : '保存配置'}
                   </button>
                 </div>
               </div>
@@ -230,6 +383,23 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
           </div>
         )}
       </section>
+
+      {saveDialog ? (
+        <div className="dialog-overlay" onClick={() => setSaveDialog(null)}>
+          <div className="dialog-card" onClick={e => e.stopPropagation()}>
+            <div className={`dialog-badge dialog-badge--${saveDialog.tone}`}>
+              {saveDialog.tone === 'info' ? '提示' : '错误'}
+            </div>
+            <div className="dialog-title">{saveDialog.title}</div>
+            <div className="dialog-text">{saveDialog.text}</div>
+            <div className="dialog-actions">
+              <button className="chip-button is-active" onClick={() => setSaveDialog(null)} type="button">
+                我知道了
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

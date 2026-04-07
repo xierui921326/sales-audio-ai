@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import Sidebar from './components/layout/Sidebar';
 import StorageHeader from './components/config/StorageHeader';
@@ -45,6 +45,7 @@ export default function App() {
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [configSaveState, setConfigSaveState] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const [configLoaded, setConfigLoaded] = useState(false);
+  const [savedConfigSnapshot, setSavedConfigSnapshot] = useState<AppConfig>(DEFAULT_CONFIG);
 
   // Lifecycle
   useEffect(() => {
@@ -52,6 +53,7 @@ export default function App() {
       try {
         const workspace = await invoke<WorkspaceData>('load_workspace');
         setConfig(workspace.config);
+        setSavedConfigSnapshot(workspace.config);
       } catch (err) {
         console.error(err);
       } finally {
@@ -61,13 +63,13 @@ export default function App() {
     load();
   }, []);
 
-  useEffect(() => {
+  const hasUnsavedChanges = useMemo(() => {
     if (!configLoaded) {
-      return;
+      return false;
     }
 
-    setConfigSaveState('idle');
-  }, [config, configLoaded]);
+    return JSON.stringify(config) !== JSON.stringify(savedConfigSnapshot);
+  }, [config, configLoaded, savedConfigSnapshot]);
 
   async function handleSaveConfig() {
     if (!configLoaded) {
@@ -78,6 +80,7 @@ export default function App() {
     try {
       const savedConfig = await invoke<AppConfig>('save_config', { config });
       setConfig(savedConfig);
+      setSavedConfigSnapshot(savedConfig);
       setConfigSaveState('success');
     } catch (err) {
       console.error(err);
@@ -122,6 +125,8 @@ export default function App() {
 
   const activeLlm = config.llmEndpoints.find(e => e.id === config.activeLlmId);
   const canGenerate = Boolean(activeLlm?.apiKey && activeLlm?.baseUrl && activeLlm?.model);
+  const llmSupplierLocked = savedConfigSnapshot.llmEndpoints.some(e => e.id === config.activeLlmId);
+  const ttsSupplierLocked = savedConfigSnapshot.ttsEndpoints.some(e => e.id === config.activeTtsId);
 
   return (
     <div className="app-shell">
@@ -141,6 +146,9 @@ export default function App() {
             onGenerateAudio={handleGenerateAudio}
             onSaveConfig={handleSaveConfig}
             configSaveState={configSaveState}
+            hasUnsavedChanges={hasUnsavedChanges}
+            llmSupplierLocked={llmSupplierLocked}
+            ttsSupplierLocked={ttsSupplierLocked}
             busy={busy}
             canGenerate={canGenerate}
           />
@@ -163,11 +171,14 @@ interface MainContentProps {
   onGenerateAudio: () => Promise<void>;
   onSaveConfig: () => Promise<void>;
   configSaveState: 'idle' | 'saving' | 'success' | 'error';
+  hasUnsavedChanges: boolean;
+  llmSupplierLocked: boolean;
+  ttsSupplierLocked: boolean;
   busy: boolean;
   canGenerate: boolean;
 }
 
-function MainContent({ activeNav, config, setConfig, transcript, analysis, audioFiles, playingId, onPlay, onGenerateConv, onGenerateAudio, onSaveConfig, configSaveState, busy, canGenerate }: MainContentProps) {
+function MainContent({ activeNav, config, setConfig, transcript, analysis, audioFiles, playingId, onPlay, onGenerateConv, onGenerateAudio, onSaveConfig, configSaveState, hasUnsavedChanges, llmSupplierLocked, ttsSupplierLocked, busy, canGenerate }: MainContentProps) {
   switch (activeNav) {
     case 'generate':
       return <GeneratePage transcript={transcript} analysis={analysis} onGenerate={onGenerateConv} onGenerateAudio={onGenerateAudio} busy={busy} canGenerate={canGenerate} />;
@@ -179,9 +190,9 @@ function MainContent({ activeNav, config, setConfig, transcript, analysis, audio
         </div>
       );
     case 'llm':
-      return <LlmConfigPage config={config} setConfig={setConfig} onSaveConfig={onSaveConfig} configSaveState={configSaveState} />;
+      return <LlmConfigPage config={config} setConfig={setConfig} onSaveConfig={onSaveConfig} configSaveState={configSaveState} hasUnsavedChanges={hasUnsavedChanges} supplierLocked={llmSupplierLocked} />;
     case 'tts':
-      return <TtsConfigPage config={config} setConfig={setConfig} onSaveConfig={onSaveConfig} configSaveState={configSaveState} />;
+      return <TtsConfigPage config={config} setConfig={setConfig} onSaveConfig={onSaveConfig} configSaveState={configSaveState} hasUnsavedChanges={hasUnsavedChanges} supplierLocked={ttsSupplierLocked} />;
     default:
       return <div className="empty-page-message">模块开发中...</div>;
   }
