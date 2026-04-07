@@ -14,20 +14,6 @@ export interface TranscriptSegment {
     keywords?: string[];
 }
 
-export interface ScoreItem {
-    label: string;
-    score: number;
-    maxScore: number;
-    comment: string;
-}
-
-export interface AnalysisResult {
-    totalScore: number;
-    scores: ScoreItem[];
-    suggestions: string[];
-    highlights: string[];
-    summary: string;
-}
 
 export interface SelectOption {
     label: string;
@@ -178,6 +164,7 @@ export interface GenerateConversationInput {
     customerRole: string;
     tone: string;
     rounds: number;
+    llmEndpointId?: string;
     systemPrompt?: string;
     scripts?: ScriptEntry[];
 }
@@ -185,7 +172,6 @@ export interface GenerateConversationInput {
 export interface GenerateConversationOutput {
     transcript: TranscriptSegment[];
     taskInfo: TaskMetaItem[];
-    analysis: AnalysisResult;
 }
 
 export interface GenerateAudioInput {

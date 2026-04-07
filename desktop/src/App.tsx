@@ -12,9 +12,6 @@ import {
   AppConfig,
   TranscriptSegment,
   AudioFileItem,
-  AnalysisResult,
-  LlmEndpointConfig,
-  TtsEndpointConfig,
   WorkspaceData,
   GenerateConversationInput,
   GenerateConversationOutput,
@@ -39,7 +36,6 @@ export default function App() {
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [activeNav, setActiveNav] = useState<NavigationItemId>('generate');
   const [transcript, setTranscript] = useState<TranscriptSegment[]>([]);
-  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [audioFiles, setAudioFiles] = useState<AudioFileItem[]>([]);
   const [playingId, setPlayingId] = useState<string | null>(null);
@@ -92,11 +88,9 @@ export default function App() {
   async function handleGenerateConversation(params: GenerateConversationInput) {
     setBusy(true);
     setTranscript([]);
-    setAnalysis(null);
     try {
-      const result = await invoke<GenerateConversationOutput>('generate_conversation', { params });
+      const result = await invoke<GenerateConversationOutput>('generate_conversation', { input: params });
       setTranscript(result.transcript);
-      setAnalysis(result.analysis);
     } catch (err) {
       console.error(err);
     } finally {
@@ -123,8 +117,6 @@ export default function App() {
     invoke('play_audio_item', { id }).catch(console.error);
   }
 
-  const activeLlm = config.llmEndpoints.find(e => e.id === config.activeLlmId);
-  const canGenerate = Boolean(activeLlm?.apiKey && activeLlm?.baseUrl && activeLlm?.model);
   const llmSupplierLocked = savedConfigSnapshot.llmEndpoints.some(e => e.id === config.activeLlmId);
   const ttsSupplierLocked = savedConfigSnapshot.ttsEndpoints.some(e => e.id === config.activeTtsId);
 
@@ -138,7 +130,6 @@ export default function App() {
             config={config}
             setConfig={setConfig}
             transcript={transcript}
-            analysis={analysis}
             audioFiles={audioFiles}
             playingId={playingId}
             onPlay={handlePlay}
@@ -150,7 +141,6 @@ export default function App() {
             llmSupplierLocked={llmSupplierLocked}
             ttsSupplierLocked={ttsSupplierLocked}
             busy={busy}
-            canGenerate={canGenerate}
           />
         </main>
       </div>
@@ -163,7 +153,6 @@ interface MainContentProps {
   config: AppConfig;
   setConfig: React.Dispatch<React.SetStateAction<AppConfig>>;
   transcript: TranscriptSegment[];
-  analysis: AnalysisResult | null;
   audioFiles: AudioFileItem[];
   playingId: string | null;
   onPlay: (id: string) => void;
@@ -175,13 +164,12 @@ interface MainContentProps {
   llmSupplierLocked: boolean;
   ttsSupplierLocked: boolean;
   busy: boolean;
-  canGenerate: boolean;
 }
 
-function MainContent({ activeNav, config, setConfig, transcript, analysis, audioFiles, playingId, onPlay, onGenerateConv, onGenerateAudio, onSaveConfig, configSaveState, hasUnsavedChanges, llmSupplierLocked, ttsSupplierLocked, busy, canGenerate }: MainContentProps) {
+function MainContent({ activeNav, config, setConfig, transcript, audioFiles, playingId, onPlay, onGenerateConv, onGenerateAudio, onSaveConfig, configSaveState, hasUnsavedChanges, llmSupplierLocked, ttsSupplierLocked, busy }: MainContentProps) {
   switch (activeNav) {
     case 'generate':
-      return <GeneratePage transcript={transcript} analysis={analysis} onGenerate={onGenerateConv} onGenerateAudio={onGenerateAudio} busy={busy} canGenerate={canGenerate} />;
+      return <GeneratePage config={config} transcript={transcript} onGenerate={onGenerateConv} onGenerateAudio={onGenerateAudio} busy={busy} />;
     case 'audio':
       return (
         <div className="page-view flex-col animate-fade-in">

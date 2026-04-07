@@ -9,13 +9,12 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  overflow: hidden;
 }
 
 .generate-form-card {
   padding: 16px;
   border-radius: 14px;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .generate-form-card__header {
@@ -32,21 +31,16 @@
   min-height: 80px;
 }
 
-.generate-form-submit,
-.generate-analysis-card__action {
+.generate-form-submit {
   width: 100%;
 }
 
-.generate-analysis-card {
-  min-height: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.generate-analysis-card__footer {
-  padding: 16px;
-  border-top: 1px solid var(--border);
-  background: linear-gradient(180deg, rgba(249, 251, 255, 0.9), rgba(246, 249, 253, 0.95));
+.generate-form-hint {
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 10px;
 }

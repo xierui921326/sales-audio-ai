@@ -35,24 +35,7 @@ struct TaskMetaItem {
     tone: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct ScoreItem {
-    label: String,
-    score: u32,
-    max_score: u32,
-    comment: String,
-}
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct AnalysisResult {
-    total_score: u32,
-    scores: Vec<ScoreItem>,
-    suggestions: Vec<String>,
-    highlights: Vec<String>,
-    summary: String,
-}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -200,6 +183,7 @@ struct GenerateConversationInput {
     customer_role: String,
     tone: String,
     rounds: u32,
+    llm_endpoint_id: Option<String>,
     system_prompt: Option<String>,
     scripts: Option<Vec<ScriptEntry>>,
 }
@@ -209,7 +193,6 @@ struct GenerateConversationInput {
 struct GenerateConversationOutput {
     transcript: Vec<TranscriptSegment>,
     task_info: Vec<TaskMetaItem>,
-    analysis: AnalysisResult,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -833,55 +816,25 @@ fn fallback_conversation(input: &GenerateConversationInput) -> GenerateConversat
                 tone: Some("success".into()),
             },
         ],
-        analysis: AnalysisResult {
-            total_score: 88,
-            scores: vec![
-                ScoreItem {
-                    label: "开场破冰".into(),
-                    score: 18,
-                    max_score: 20,
-                    comment: "开场自然，聚焦场景。".into(),
-                },
-                ScoreItem {
-                    label: "需求挖掘".into(),
-                    score: 27,
-                    max_score: 30,
-                    comment: "能够结合客户角色进行追问。".into(),
-                },
-                ScoreItem {
-                    label: "价值呈现".into(),
-                    score: 25,
-                    max_score: 30,
-                    comment: "价值点已和业务场景关联。".into(),
-                },
-                ScoreItem {
-                    label: "推进收尾".into(),
-                    score: 18,
-                    max_score: 20,
-                    comment: "对下一步动作的推进较明确。".into(),
-                },
-            ],
-            suggestions: vec![
-                "补充更具体的量化收益说明。".into(),
-                "增加对客户现状工具链的确认。".into(),
-                "结尾可进一步锁定演示时间。".into(),
-            ],
-            highlights: vec!["场景聚焦清晰".into(), "推进动作明确".into()],
-            summary: format!(
-                "已基于{}行业、{}场景与{}角色生成 {} 轮对话。",
-                input.industry, input.scenario, input.customer_role, rounds
-            ),
-        },
     }
 }
 
 async fn call_remote_llm(config: &AppConfig, input: &GenerateConversationInput) -> Result<GenerateConversationOutput, String> {
-    let llm_config = config
-        .llm_endpoints
-        .iter()
-        .find(|e| e.id == config.active_llm_id)
-        .or_else(|| config.llm_endpoints.first())
-        .ok_or_else(|| "没有可用的 LLM 配置".to_string())?;
+    let requested_endpoint_id = input.llm_endpoint_id.as_deref().map(str::trim).filter(|id| !id.is_empty());
+    let llm_config = if let Some(endpoint_id) = requested_endpoint_id {
+        config
+            .llm_endpoints
+            .iter()
+            .find(|e| e.id == endpoint_id)
+            .ok_or_else(|| format!("未找到指定的 LLM 配置: {}", endpoint_id))?
+    } else {
+        config
+            .llm_endpoints
+            .iter()
+            .find(|e| e.id == config.active_llm_id)
+            .or_else(|| config.llm_endpoints.first())
+            .ok_or_else(|| "没有可用的 LLM 配置".to_string())?
+    };
 
     let api_key = llm_config.api_key.trim();
     if api_key.is_empty() {
@@ -996,38 +949,6 @@ async fn call_remote_llm(config: &AppConfig, input: &GenerateConversationInput) 
                 tone: Some("success".into()),
             },
         ],
-        analysis: AnalysisResult {
-            total_score: 90,
-            scores: vec![
-                ScoreItem {
-                    label: "开场破冰".into(),
-                    score: 18,
-                    max_score: 20,
-                    comment: "远程模型生成的开场较自然。".into(),
-                },
-                ScoreItem {
-                    label: "需求挖掘".into(),
-                    score: 28,
-                    max_score: 30,
-                    comment: "追问维度较完整。".into(),
-                },
-                ScoreItem {
-                    label: "价值呈现".into(),
-                    score: 26,
-                    max_score: 30,
-                    comment: "能够结合业务场景表达价值。".into(),
-                },
-                ScoreItem {
-                    label: "推进收尾".into(),
-                    score: 18,
-                    max_score: 20,
-                    comment: "收尾推进明确。".into(),
-                },
-            ],
-            suggestions: vec!["可补充更具体的客户数据。".into(), "可继续优化结尾的行动引导。".into()],
-            highlights: vec!["已调用真实远程模型".into(), "结果来自在线生成".into()],
-            summary: format!("已通过 {} 模型生成真实销售对话。", llm_config.model),
-        },
     })
 }
 
