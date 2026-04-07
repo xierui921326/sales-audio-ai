@@ -185,21 +185,11 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
 
   const currentPreset =
     activeEndpoint &&
-    (TTS_PRESETS.find(
-      p =>
-        p.provider === activeEndpoint.provider &&
-        p.baseUrl === activeEndpoint.baseUrl &&
-        p.ttsModel === activeEndpoint.ttsModel
-    ) || TTS_PRESETS[0]);
+    (TTS_PRESETS.find(p => p.provider === activeEndpoint.provider) || TTS_PRESETS[0]);
 
   const isTitleLocked =
     !!activeEndpoint &&
-    TTS_PRESETS.some(
-      p =>
-        p.provider === activeEndpoint.provider &&
-        p.baseUrl === activeEndpoint.baseUrl &&
-        p.ttsModel === activeEndpoint.ttsModel
-    );
+    TTS_PRESETS.some(p => p.provider === activeEndpoint.provider);
 
   const allowBaseUrlEdit = !!activeEndpoint && !isEdgePreset;
 
@@ -282,27 +272,26 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
 
                 {!isEdgePreset ? (
                   <div className="group-card config-form-stack__group-card">
-                    <div className="config-grid-2">
-                      <div className="field-block">
-                        <label>API Key</label>
-                        <input
-                          className="field-control"
-                          type="password"
-                          value={activeEndpoint.apiKey}
-                          onChange={e => updateEndpoint(activeEndpoint.id, { apiKey: e.target.value })}
-                          placeholder="sk-..."
-                        />
-                      </div>
-                      <div className="field-block">
-                        <label>Base URL / 接入点</label>
-                        <input
-                          className="field-control"
-                          value={activeEndpoint.baseUrl}
-                          disabled={!allowBaseUrlEdit}
-                          onChange={e => updateEndpoint(activeEndpoint.id, { baseUrl: e.target.value })}
-                          placeholder="https://..."
-                        />
-                      </div>
+                    <div className="field-block">
+                      <label>API Key</label>
+                      <input
+                        className="field-control"
+                        type="password"
+                        value={activeEndpoint.apiKey}
+                        onChange={e => updateEndpoint(activeEndpoint.id, { apiKey: e.target.value })}
+                        placeholder="sk-..."
+                      />
+                    </div>
+
+                    <div className="field-block config-field-offset">
+                      <label>Base URL / 接入点</label>
+                      <input
+                        className="field-control"
+                        value={activeEndpoint.baseUrl}
+                        disabled={!allowBaseUrlEdit}
+                        onChange={e => updateEndpoint(activeEndpoint.id, { baseUrl: e.target.value })}
+                        placeholder="https://..."
+                      />
                     </div>
                   </div>
                 ) : null}
