@@ -4,17 +4,32 @@
   flex-direction: column;
 }
 
+.generate-workspace {
+  min-height: 0;
+}
+
+.generate-transcript-card {
+  min-height: 0;
+  height: 100%;
+}
+
 .generate-side-column {
   min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 12px;
 }
 
 .generate-form-card {
-  padding: 16px;
-  border-radius: 14px;
-  overflow: auto;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.generate-form-scroll {
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
 }
 
 .generate-form-card__header {
@@ -28,7 +43,25 @@
 }
 
 .generate-form-textarea {
-  min-height: 80px;
+  min-height: 96px;
+}
+
+.generate-form-textarea--compact {
+  min-height: 84px;
+}
+
+.generate-advanced-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+
+.generate-advanced-panel .field-block {
+  margin: 0;
 }
 
 .generate-form-submit {

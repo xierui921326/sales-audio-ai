@@ -164,6 +164,7 @@ export interface GenerateConversationInput {
     customerRole: string;
     tone: string;
     rounds: number;
+    supplementalPrompt?: string;
     llmEndpointId?: string;
     systemPrompt?: string;
     scripts?: ScriptEntry[];

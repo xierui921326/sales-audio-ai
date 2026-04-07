@@ -183,6 +183,7 @@ struct GenerateConversationInput {
     customer_role: String,
     tone: String,
     rounds: u32,
+    supplemental_prompt: Option<String>,
     llm_endpoint_id: Option<String>,
     system_prompt: Option<String>,
     scripts: Option<Vec<ScriptEntry>>,
@@ -767,6 +768,13 @@ fn extract_json_block(content: &str) -> Option<String> {
 fn fallback_conversation(input: &GenerateConversationInput) -> GenerateConversationOutput {
     let rounds = input.rounds.max(2).min(12);
     let mut transcript = Vec::new();
+    let scenario = input.scenario.trim();
+    let supplemental_prompt = input
+        .supplemental_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
 
     for idx in 0..rounds {
         let sales_id = (idx * 2 + 1).to_string();
@@ -775,25 +783,31 @@ fn fallback_conversation(input: &GenerateConversationInput) -> GenerateConversat
         transcript.push(TranscriptSegment {
             id: sales_id,
             speaker: "sales".into(),
-            text: format!(
-                "您好，我想结合{}行业的{}场景，了解一下您在{}环节最关注什么问题？",
-                input.industry, input.scenario, input.customer_role
-            ),
+            text: if idx == 0 && !supplemental_prompt.is_empty() {
+                format!(
+                    "您好，关于“{}”，我想重点结合“{}”和您交流一下，看看是否方便继续沟通。",
+                    scenario, supplemental_prompt
+                )
+            } else {
+                format!("您好，关于“{}”，想先了解一下您目前最关注的点是什么？", scenario)
+            },
             start_time: start,
             end_time: start + 4,
-            keywords: Some(vec![input.industry.clone(), input.scenario.clone()]),
+            keywords: Some(vec![scenario.to_string()]),
         });
         transcript.push(TranscriptSegment {
             id: customer_id,
             speaker: "customer".into(),
             text: if idx == 0 {
-                format!("我们比较关注{}推进效率。", input.scenario)
+                "我现在还在考虑，想先看看值不值得继续了解。".into()
+            } else if !supplemental_prompt.is_empty() && idx == rounds - 1 {
+                format!("如果你提到的方案能兼顾{}，我愿意再详细听听。", supplemental_prompt)
             } else {
-                format!("如果方案合适，我们愿意进一步了解，语气偏{}。", input.tone)
+                "可以，你继续说说看。".into()
             },
             start_time: start + 4,
             end_time: start + 8,
-            keywords: Some(vec![input.customer_role.clone()]),
+            keywords: Some(vec![scenario.to_string()]),
         });
     }
 
@@ -802,7 +816,7 @@ fn fallback_conversation(input: &GenerateConversationInput) -> GenerateConversat
         task_info: vec![
             TaskMetaItem {
                 label: "任务 ID".into(),
-                value: format!("task-{}-{}", input.industry, rounds),
+                value: format!("task-{}-{}", scenario, rounds),
                 tone: Some("neutral".into()),
             },
             TaskMetaItem {
@@ -818,6 +832,7 @@ fn fallback_conversation(input: &GenerateConversationInput) -> GenerateConversat
         ],
     }
 }
+
 
 async fn call_remote_llm(config: &AppConfig, input: &GenerateConversationInput) -> Result<GenerateConversationOutput, String> {
     let requested_endpoint_id = input.llm_endpoint_id.as_deref().map(str::trim).filter(|id| !id.is_empty());
@@ -841,6 +856,25 @@ async fn call_remote_llm(config: &AppConfig, input: &GenerateConversationInput) 
         return Err("未配置 LLM API Key".into());
     }
 
+    let scenario = input.scenario.trim();
+    let supplemental_prompt = input
+        .supplemental_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    if scenario.is_empty() {
+        return Err("对话场景不能为空".into());
+    }
+    if scenario.chars().count() > 500 {
+        return Err("对话场景长度不能超过 500 个字符".into());
+    }
+    if let Some(extra) = supplemental_prompt {
+        if extra.chars().count() > 1000 {
+            return Err("补充要求长度不能超过 1000 个字符".into());
+        }
+    }
+
     let base_url = llm_config.base_url.trim_end_matches('/');
     let url = format!("{}/chat/completions", base_url);
     let system_prompt = input.system_prompt.clone().unwrap_or_else(|| {
@@ -861,9 +895,13 @@ async fn call_remote_llm(config: &AppConfig, input: &GenerateConversationInput) 
         })
         .unwrap_or_default();
 
+    let supplemental_hint = supplemental_prompt
+        .map(|value| format!("\n补充要求：{}", value))
+        .unwrap_or_default();
+
     let user_prompt = format!(
-        "行业：{}\n场景：{}\n客户角色：{}\n语气：{}\n轮数：{}{}请输出严格 JSON 数组，每轮包含 sales 和 customer 两条发言。",
-        input.industry, input.scenario, input.customer_role, input.tone, input.rounds, scripts_hint
+        "对话场景：{}\n轮数：{}{}{}\n请严格输出 JSON 数组，每轮包含 sales 和 customer 两条发言，内容要自然、口语化，并围绕场景推进到明确的下一步。",
+        scenario, input.rounds, supplemental_hint, scripts_hint
     );
 
     let request = OpenAiRequest {
@@ -935,7 +973,7 @@ async fn call_remote_llm(config: &AppConfig, input: &GenerateConversationInput) 
         task_info: vec![
             TaskMetaItem {
                 label: "任务 ID".into(),
-                value: format!("remote-{}", input.industry),
+                value: format!("remote-{}", scenario),
                 tone: Some("neutral".into()),
             },
             TaskMetaItem {
