@@ -90,22 +90,15 @@ export default function GeneratePage({
   }
 
   return (
-    <div className="page-stage">
-      <header className="page-stage__header">
-        <div className="section-heading compact">
-          <h2>智能生成对话</h2>
-          <p>直接描述完整场景，系统会结合补充要求生成多轮销售对话。</p>
-        </div>
-      </header>
-
+    <div className="page-stage generate-page-stage">
       <div className="layout-split generate-workspace generate-workspace--wide-right">
         <div className="form-content generate-side-column">
           <section className="config-page-card generate-form-card storage-card">
             <div className="config-form-wrapper generate-form-scroll">
               <div className="storage-card__header generate-form-card__header">
                 <div className="storage-card__content">
-                  <div className="storage-card__title">生成参数</div>
-                  <div className="storage-card__desc">先描述完整场景，再补充卖点、顾虑和推进目标。</div>
+                  <div className="storage-card__title">智能生成对话</div>
+                  <div className="storage-card__desc">先描述完整场景，再补充卖点、顾虑和推进目标，系统会直接生成多轮销售对话。</div>
                 </div>
               </div>
 
