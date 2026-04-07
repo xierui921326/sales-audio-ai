@@ -98,17 +98,17 @@ export default function GeneratePage({
         </div>
       </header>
 
-      <div className="layout-split generate-workspace">
-        <div className="card-base conversation-layout overflow-hidden generate-transcript-card">
-          <TranscriptPanel transcript={transcript} recordingState={recordingState} />
-        </div>
-
+      <div className="layout-split generate-workspace generate-workspace--wide-right">
         <div className="form-content generate-side-column">
-          <section className="config-page-card generate-form-card">
+          <section className="config-page-card generate-form-card storage-card">
             <div className="config-form-wrapper generate-form-scroll">
-              <div className="section-heading compact generate-form-card__header">
-                <h3>生成参数</h3>
+              <div className="storage-card__header generate-form-card__header">
+                <div className="storage-card__content">
+                  <div className="storage-card__title">生成参数</div>
+                  <div className="storage-card__desc">先描述完整场景，再补充卖点、顾虑和推进目标。</div>
+                </div>
               </div>
+
               <div className="generate-form-stack">
                 <div className="field-block">
                   <label>对话场景</label>
@@ -177,6 +177,10 @@ export default function GeneratePage({
               </div>
             </div>
           </section>
+        </div>
+
+        <div className="card-base conversation-layout generate-transcript-card">
+          <TranscriptPanel transcript={transcript} recordingState={recordingState} />
         </div>
       </div>
     </div>
