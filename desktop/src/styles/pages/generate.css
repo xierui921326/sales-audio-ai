@@ -8,7 +8,8 @@
 }
 
 .generate-page-stage {
-  padding-top: 0;
+  padding: 0;
+  gap: 0;
 }
 
 .generate-workspace {

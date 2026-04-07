@@ -28,8 +28,12 @@
 .page-stage {
   padding: 12px;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: 10px;
+}
+
+.page-stage--with-header {
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .page-stage__header,
