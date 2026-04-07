@@ -178,6 +178,23 @@
   border: 1px solid var(--border);
   border-radius: 10px;
   cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+}
+
+.preset-trigger:disabled {
+  color: var(--text-muted);
+  background: var(--surface-muted);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.preset-trigger:disabled .preset-trigger__text,
+.preset-trigger:disabled .preset-trigger__arrow {
+  color: var(--text-muted);
+}
+
+.preset-trigger:not(:disabled):hover {
+  border-color: var(--blue);
 }
 
 .preset-trigger.is-open {

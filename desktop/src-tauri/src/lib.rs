@@ -353,6 +353,121 @@ async fn request_elevenlabs_tts_bytes(tts_config: &TtsEndpointConfig, text: &str
         .map_err(|e| format!("读取 ElevenLabs 音频失败: {e}"))
 }
 
+async fn request_qwen_tts_bytes(tts_config: &TtsEndpointConfig, text: &str, voice: &str) -> Result<Vec<u8>, String> {
+    let base_url = tts_config.base_url.trim_end_matches('/');
+    if base_url.is_empty() {
+        return Err("未配置千问 TTS Base URL".into());
+    }
+
+    let selected_voice = voice.trim();
+    if selected_voice.is_empty() {
+        return Err("未选择千问 TTS 音色".into());
+    }
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{}/tts", base_url))
+        .header(CONTENT_TYPE, "application/json")
+        .json(&serde_json::json!({
+            "text": text,
+            "voice": selected_voice,
+            "language": "zh"
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("请求千问 TTS 失败: {e}"))?;
+
+    if !response.status().is_success() {
+        let text = response.text().await.unwrap_or_default();
+        return Err(format!("千问 TTS 返回失败: {}", text));
+    }
+
+    let payload: QwenTtsResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("解析千问 TTS 响应失败: {e}"))?;
+
+    let file_url = payload.file_url.trim();
+    if file_url.is_empty() {
+        return Err("千问 TTS 未返回 file_url".into());
+    }
+
+    let download_url = if file_url.starts_with("http://") || file_url.starts_with("https://") {
+        file_url.to_string()
+    } else {
+        format!("{}{}", base_url, file_url)
+    };
+
+    let audio_response = client
+        .get(download_url)
+        .send()
+        .await
+        .map_err(|e| format!("下载千问 TTS 音频失败: {e}"))?;
+
+    if !audio_response.status().is_success() {
+        let text = audio_response.text().await.unwrap_or_default();
+        return Err(format!("下载千问 TTS 音频失败: {}", text));
+    }
+
+    audio_response
+        .bytes()
+        .await
+        .map(|bytes| bytes.to_vec())
+        .map_err(|e| format!("读取千问 TTS 音频失败: {e}"))
+}
+
+async fn list_tts_voices_inner(config: &AppConfig) -> Result<Vec<SelectOption>, String> {
+    let tts_config = config
+        .tts_endpoints
+        .iter()
+        .find(|e| e.id == config.active_tts_id)
+        .or_else(|| config.tts_endpoints.first())
+        .ok_or_else(|| "没有可用的 TTS 配置".to_string())?;
+
+    if tts_config.provider != "qwen" {
+        return Err("当前 TTS 提供商不支持获取音色列表".into());
+    }
+
+    let base_url = tts_config.base_url.trim_end_matches('/');
+    if base_url.is_empty() {
+        return Err("未配置千问 TTS Base URL".into());
+    }
+
+    let response = reqwest::Client::new()
+        .get(format!("{}/voices", base_url))
+        .send()
+        .await
+        .map_err(|e| format!("请求音色列表失败: {e}"))?;
+
+    if !response.status().is_success() {
+        let text = response.text().await.unwrap_or_default();
+        return Err(format!("音色列表接口返回失败: {}", text));
+    }
+
+    let payload: QwenVoicesResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("解析音色列表失败: {e}"))?;
+
+    let mut voices = payload
+        .voices
+        .into_iter()
+        .filter(|voice| !voice.trim().is_empty())
+        .map(|voice| SelectOption {
+            label: voice.clone(),
+            value: voice,
+            badge: None,
+        })
+        .collect::<Vec<_>>();
+
+    voices.sort_by(|a, b| a.label.cmp(&b.label));
+    Ok(voices)
+}
+
+fn is_mp3_audio(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"ID3") || (bytes.len() >= 2 && bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0)
+}
+
 async fn synthesize_audio_bytes(config: &AppConfig, speaker: &str, text: &str) -> Result<Vec<u8>, String> {
     let tts_config = config
         .tts_endpoints
@@ -370,6 +485,7 @@ async fn synthesize_audio_bytes(config: &AppConfig, speaker: &str, text: &str) -
     match tts_config.provider.as_str() {
         "openai" => request_openai_tts_bytes(tts_config, text, voice).await,
         "elevenlabs" => request_elevenlabs_tts_bytes(tts_config, text, voice).await,
+        "qwen" => request_qwen_tts_bytes(tts_config, text, voice).await,
         _ => Err("当前 TTS 提供商未接入真实在线语音，已回退本地占位文件。".into()),
     }
 }
@@ -973,6 +1089,16 @@ struct OpenAiModelItem {
     id: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct QwenTtsResponse {
+    file_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct QwenVoicesResponse {
+    voices: Vec<String>,
+}
+
 #[tauri::command]
 async fn list_llm_models(config: AppConfig) -> Result<Vec<SelectOption>, String> {
     let llm_config = config
@@ -1009,7 +1135,6 @@ async fn list_llm_models(config: AppConfig) -> Result<Vec<SelectOption>, String>
     let payload: OpenAiModelsResponse = match serde_json::from_str(&text) {
         Ok(p) => p,
         Err(e) => {
-            // 如果解析失败，为了方便排查，最多截取前 200 个字符进行回显提示
             let snippet = if text.len() > 200 { format!("{}...", text.chars().take(200).collect::<String>()) } else { text.clone() };
             return Err(format!("解析模型列表失败: {}\n返回内容: {}", e, snippet));
         }
@@ -1028,6 +1153,11 @@ async fn list_llm_models(config: AppConfig) -> Result<Vec<SelectOption>, String>
     models.sort_by(|a, b| a.label.cmp(&b.label));
 
     Ok(models)
+}
+
+#[tauri::command]
+async fn list_tts_voices(config: AppConfig) -> Result<Vec<SelectOption>, String> {
+    list_tts_voices_inner(&config).await
 }
 
 #[tauri::command]
@@ -1098,6 +1228,8 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
     for (index, segment) in input.transcript.iter().enumerate() {
         let extension = if matches!(tts_config.provider.as_str(), "openai" | "elevenlabs") {
             "mp3"
+        } else if tts_config.provider == "qwen" {
+            "wav"
         } else {
             "txt"
         };
@@ -1130,7 +1262,15 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
         });
     }
 
-    let merged_extension = if used_real_tts { "wav" } else { "txt" };
+    let merged_extension = if used_real_tts {
+        if merged_chunks.iter().all(|chunk| is_mp3_audio(chunk)) {
+            "wav"
+        } else {
+            "bin"
+        }
+    } else {
+        "txt"
+    };
     let merged_name = format!("merged_task.{}", merged_extension);
     let merged_path = output_dir.join(&merged_name);
     let merged_text = input
@@ -1141,7 +1281,11 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
         .join("\n");
 
     if used_real_tts {
-        merge_mp3_segments_to_wav(&merged_path, &merged_chunks)?;
+        if merged_chunks.iter().all(|chunk| is_mp3_audio(chunk)) {
+            merge_mp3_segments_to_wav(&merged_path, &merged_chunks)?;
+        } else if let Some(first_chunk) = merged_chunks.first() {
+            fs::write(&merged_path, first_chunk).map_err(|e| format!("写入合并音频失败: {e}"))?;
+        }
     } else {
         create_audio_placeholder(&merged_path, &merged_text)?;
     }
@@ -1149,7 +1293,7 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
     let merged_file = AudioFileItem {
         id: "audio-merged".into(),
         role: "merged".into(),
-        title: if used_real_tts { "合并音频（WAV）".into() } else { "合并音频".into() },
+        title: if used_real_tts { "合并音频".into() } else { "合并音频".into() },
         file_name: merged_name,
         duration: format!("00:{:02}", (input.transcript.len() as u32 * 4).min(59)),
         file_path: Some(merged_path.to_string_lossy().to_string()),
@@ -1286,6 +1430,7 @@ pub fn run() {
             save_scripts,
             save_tasks,
             list_llm_models,
+            list_tts_voices,
             generate_conversation,
             generate_audio,
             export_zip,
