@@ -1,4 +1,4 @@
-import { Dispatch, SetStateAction } from 'react';
+import { Dispatch, SetStateAction, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { AppConfig } from '../../types';
 
@@ -7,7 +7,14 @@ interface StorageHeaderProps {
   setConfig: Dispatch<SetStateAction<AppConfig>>;
 }
 
+const DEFAULT_AUDIO_DIR = './storage/audio';
+
 export default function StorageHeader({ config, setConfig }: StorageHeaderProps) {
+  const displayPath = useMemo(() => {
+    const nextPath = config.audioDir.trim();
+    return nextPath || `${DEFAULT_AUDIO_DIR}（默认目录）`;
+  }, [config.audioDir]);
+
   // 音频目录由音频页统一维护，生成与导出链路都直接读取这里的配置。
   async function pickPath() {
     const path = await invoke<string>('pick_path', { kind: 'directory' });
@@ -26,7 +33,7 @@ export default function StorageHeader({ config, setConfig }: StorageHeaderProps)
         <button className="primary-button" onClick={pickPath} type="button">更改目录</button>
       </div>
       <div className="path-display storage-card__path">
-        {config.audioDir || '未选择存储路径'}
+        {displayPath}
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import Sidebar from './components/layout/Sidebar';
 import StorageHeader from './components/config/StorageHeader';
 import GeneratePage from './pages/GeneratePage';
@@ -48,6 +49,23 @@ export default function App() {
   const [configLoaded, setConfigLoaded] = useState(false);
   const [savedConfigSnapshot, setSavedConfigSnapshot] = useState<AppConfig>(DEFAULT_CONFIG);
   const [generateDialog, setGenerateDialog] = useState<GenerateDialogState>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const audio = new Audio();
+    audioRef.current = audio;
+
+    const handleEnded = () => {
+      setPlayingId(null);
+    };
+
+    audio.addEventListener('ended', handleEnded);
+    return () => {
+      audio.pause();
+      audio.removeEventListener('ended', handleEnded);
+      audioRef.current = null;
+    };
+  }, []);
 
   // 应用启动时先读取本地工作区配置，后续所有页面都基于这份配置工作。
   useEffect(() => {
@@ -135,9 +153,15 @@ export default function App() {
           audioDir: config.audioDir,
         },
       });
-      setAudioFiles([...result.audioFiles, result.mergedFile]);
+      setAudioFiles([result.mergedFile]);
+      setPlayingId(null);
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
       logger.info('audio', '音频生成成功', {
-        fileCount: result.audioFiles.length + 1,
+        fileCount: 1,
+        mergedFile: result.mergedFile.fileName,
       });
     } catch (err) {
       logger.error('audio', '音频生成失败', err);
@@ -151,19 +175,38 @@ export default function App() {
     }
   }
 
-  function handlePlay(id: string) {
-    const nextPlayingId = id === playingId ? null : id;
-    setPlayingId(nextPlayingId);
-
+  async function handlePlay(id: string) {
+    const player = audioRef.current;
     const target = audioFiles.find(file => file.id === id)?.filePath;
-    if (!target) {
+    if (!player || !target) {
       logger.warn('audio', '未找到可播放的音频路径', { id });
       return;
     }
 
-    invoke('open_path', { path: target }).catch(err => {
-      logger.error('audio', '打开音频路径失败', err);
-    });
+    if (playingId === id) {
+      player.pause();
+      player.currentTime = 0;
+      setPlayingId(null);
+      return;
+    }
+
+    try {
+      const audioUrl = convertFileSrc(target);
+      player.pause();
+      player.src = audioUrl;
+      player.currentTime = 0;
+      await player.play();
+      setPlayingId(id);
+      logger.info('audio', '开始播放音频', { id, target });
+    } catch (err) {
+      setPlayingId(null);
+      logger.error('audio', '播放音频失败', err);
+      setGenerateDialog({
+        title: '播放失败',
+        text: err instanceof Error ? err.message : String(err),
+        tone: 'error',
+      });
+    }
   }
 
   return (

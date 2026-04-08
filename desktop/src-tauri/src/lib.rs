@@ -5,16 +5,10 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
-    sync::Mutex,
 };
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::DialogExt;
 use zip::write::SimpleFileOptions;
-
-#[derive(Default)]
-struct AudioState {
-    current: Mutex<Option<PathBuf>>,
-}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -387,7 +381,7 @@ async fn request_qwen_tts_bytes(tts_config: &TtsEndpointConfig, text: &str, voic
         .json(&serde_json::json!({
             "text": text,
             "voice": selected_voice,
-            "language": "zh"
+            "language": "Chinese / 中文"
         }))
         .send()
         .await
@@ -600,6 +594,30 @@ fn default_fallback_model() -> String {
     "deepseek-chat".into()
 }
 
+fn ensure_output_dir(data_dir: &Path, requested_audio_dir: &str) -> Result<PathBuf, String> {
+    let audio_dir = requested_audio_dir.trim();
+    let relative_dir = if audio_dir.is_empty() {
+        default_audio_dir()
+    } else {
+        audio_dir.to_string()
+    };
+
+    Ok(data_dir.join(relative_dir.replace("./", "")))
+}
+
+fn audio_file_extension(provider: &str) -> &'static str {
+    match provider {
+        "openai" | "elevenlabs" => "mp3",
+        "qwen" => "wav",
+        _ => "wav",
+    }
+}
+
+fn merged_audio_title() -> String {
+    "合并音频".into()
+}
+
+
 fn default_audio_dir() -> String {
     "./storage/audio".into()
 }
@@ -770,12 +788,6 @@ fn save_workspace(app: &AppHandle, workspace: &WorkspaceData) -> Result<(), Stri
     fs::write(path, text).map_err(|e| format!("写入工作区失败: {e}"))
 }
 
-fn create_audio_placeholder(path: &Path, text: &str) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("创建音频目录失败: {e}"))?;
-    }
-    fs::write(path, text.as_bytes()).map_err(|e| format!("写入音频占位文件失败: {e}"))
-}
 
 fn extract_json_block(content: &str) -> Option<String> {
     if content.trim_start().starts_with('[') {
@@ -1209,10 +1221,9 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
     let workspace = ensure_workspace(&app)?;
     let config = workspace.config;
     let data_dir = app_data_dir(&app)?;
-    let output_dir = data_dir.join(input.audio_dir.replace("./", ""));
+    let output_dir = ensure_output_dir(&data_dir, &input.audio_dir)?;
     fs::create_dir_all(&output_dir).map_err(|e| format!("创建输出目录失败: {e}"))?;
 
-    let mut audio_files = Vec::new();
     let mut merged_chunks: Vec<Vec<u8>> = Vec::new();
     let mut used_real_tts = false;
 
@@ -1223,62 +1234,40 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
         .or_else(|| config.tts_endpoints.first())
         .ok_or_else(|| "没有可用的 TTS 配置".to_string())?;
 
-    // 逐句合成并立即落盘，既方便调试单条失败，也能让前端准确展示每个片段对应的文件。
-    for (index, segment) in input.transcript.iter().enumerate() {
-        let extension = if matches!(tts_config.provider.as_str(), "openai" | "elevenlabs") {
-            "mp3"
-        } else if tts_config.provider == "qwen" {
-            "wav"
-        } else {
-            "txt"
-        };
-        let file_name = format!("task_{:03}_{}.{}", index + 1, segment.speaker, extension);
-        let file_path = output_dir.join(&file_name);
+    let segment_extension = audio_file_extension(&tts_config.provider);
 
+    // 仍然逐句合成，便于后端按顺序拼接，但音频页只展示最终合并文件。
+    for (index, segment) in input.transcript.iter().enumerate() {
         match synthesize_audio_bytes(&config, &segment.speaker, &segment.text).await {
             Ok(bytes) => {
-                fs::write(&file_path, &bytes).map_err(|e| format!("写入在线 TTS 音频失败: {e}"))?;
                 merged_chunks.push(bytes);
                 used_real_tts = true;
                 println!(
-                    "[sales-audio-ai][audio] 音频片段写入成功 index={} path={}",
+                    "[sales-audio-ai][audio] 音频片段合成成功 index={} provider={} ext={}",
                     index + 1,
-                    file_path.to_string_lossy()
+                    tts_config.provider,
+                    segment_extension
                 );
             }
             Err(error) => {
                 eprintln!(
-                    "[sales-audio-ai][audio] 在线 TTS 失败，改写占位文件 index={} error={}",
+                    "[sales-audio-ai][audio] 在线 TTS 失败，终止合并 index={} error={}",
                     index + 1,
                     error
                 );
-                create_audio_placeholder(&file_path, &segment.text)?;
+                return Err(error);
             }
         }
-
-        audio_files.push(AudioFileItem {
-            id: format!("audio-{}", index + 1),
-            role: segment.speaker.clone(),
-            title: format!(
-                "{} · 第 {} 轮",
-                if segment.speaker == "sales" { "销售" } else { "客户" },
-                index / 2 + 1
-            ),
-            file_name,
-            duration: format!("00:{:02}", (segment.end_time - segment.start_time).min(59)),
-            file_path: Some(file_path.to_string_lossy().to_string()),
-            text: Some(segment.text.clone()),
-        });
     }
 
-    let merged_extension = if used_real_tts {
-        if merged_chunks.iter().all(|chunk| is_mp3_audio(chunk)) {
-            "wav"
-        } else {
-            "bin"
-        }
+    if !used_real_tts || merged_chunks.is_empty() {
+        return Err("未生成任何可用音频片段，请检查当前 TTS 配置后重试。".into());
+    }
+
+    let merged_extension = if merged_chunks.iter().all(|chunk| is_mp3_audio(chunk)) {
+        "wav"
     } else {
-        "txt"
+        segment_extension
     };
     let merged_name = format!("merged_task.{}", merged_extension);
     let merged_path = output_dir.join(&merged_name);
@@ -1289,33 +1278,35 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
         .collect::<Vec<_>>()
         .join("\n");
 
-    if used_real_tts {
-        if merged_chunks.iter().all(|chunk| is_mp3_audio(chunk)) {
-            merge_mp3_segments_to_wav(&merged_path, &merged_chunks)?;
-        } else if let Some(first_chunk) = merged_chunks.first() {
-            fs::write(&merged_path, first_chunk).map_err(|e| format!("写入合并音频失败: {e}"))?;
-        }
+    if merged_chunks.iter().all(|chunk| is_mp3_audio(chunk)) {
+        merge_mp3_segments_to_wav(&merged_path, &merged_chunks)?;
+    } else if merged_chunks.len() == 1 {
+        fs::write(&merged_path, &merged_chunks[0]).map_err(|e| format!("写入合并音频失败: {e}"))?;
     } else {
-        create_audio_placeholder(&merged_path, &merged_text)?;
+        return Err("当前 TTS 返回的音频格式暂不支持多片段直接合并，请改用 OpenAI / ElevenLabs，或减少为单句后再试。".into());
     }
 
     println!(
-        "[sales-audio-ai][audio] 合并音频输出完成 used_real_tts={} path={}",
-        used_real_tts,
+        "[sales-audio-ai][audio] 合并音频输出完成 provider={} ext={} path={}",
+        tts_config.provider,
+        merged_extension,
         merged_path.to_string_lossy()
     );
 
     let merged_file = AudioFileItem {
-        id: "audio-merged".into(),
+        id: format!("audio-merged-{}", Local::now().timestamp()),
         role: "merged".into(),
-        title: if used_real_tts { "合并音频".into() } else { "合并音频".into() },
+        title: merged_audio_title(),
         file_name: merged_name,
         duration: format!("00:{:02}", (input.transcript.len() as u32 * 4).min(59)),
         file_path: Some(merged_path.to_string_lossy().to_string()),
         text: Some(merged_text),
     };
 
-    Ok(GenerateAudioOutput { audio_files, merged_file })
+    Ok(GenerateAudioOutput {
+        audio_files: vec![merged_file.clone()],
+        merged_file,
+    })
 }
 
 #[tauri::command]
@@ -1411,35 +1402,9 @@ fn get_health_status(app: AppHandle) -> Result<HealthStatus, String> {
     })
 }
 
-#[tauri::command]
-fn open_path(app: AppHandle, path: String, audio_state: State<AudioState>) -> Result<String, String> {
-    let target = if path.trim().is_empty() {
-        workspace_file(&app)?
-    } else {
-        PathBuf::from(path)
-    };
-
-    if !target.exists() {
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
-        }
-        if target.extension().is_some() {
-            fs::write(&target, b"").map_err(|e| format!("创建文件失败: {e}"))?;
-        }
-    }
-
-    let mut guard = audio_state
-        .current
-        .lock()
-        .map_err(|_| "状态锁失败".to_string())?;
-    *guard = Some(target.clone());
-    println!("[sales-audio-ai][fs] 打开路径 {}", target.to_string_lossy());
-    Ok(target.to_string_lossy().to_string())
-}
 
 pub fn run() {
     tauri::Builder::default()
-        .manage(AudioState::default())
         .invoke_handler(tauri::generate_handler![
             load_workspace,
             save_config,
@@ -1454,7 +1419,6 @@ pub fn run() {
             save_zip_as,
             pick_path,
             get_health_status,
-            open_path,
         ])
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
