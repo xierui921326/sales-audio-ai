@@ -6,10 +6,12 @@ import { logger } from '../utils/logger';
 import { AppConfig, TtsEndpointConfig } from '../types';
 
 const EDGE_TTS_VOICE_OPTIONS = [
-  { value: 'zh-CN-XiaoxiaoNeural', label: 'zh-CN-XiaoxiaoNeural（男声）' },
-  { value: 'zh-CN-YunjianNeural', label: 'zh-CN-YunjianNeural（女声）' },
-  { value: 'zh-CN-liaoning-XiaobeiNeural', label: 'zh-CN-liaoning-XiaobeiNeural（男声）' },
-  { value: 'zh-CN-shaanxi-XiaoniNeural', label: 'zh-CN-shaanxi-XiaoniNeural（男声）' },
+  { value: 'zh-CN-XiaoxiaoNeural', label: 'zh-CN-XiaoxiaoNeural（女声）' },
+  { value: 'zh-CN-XiaoyiNeural', label: 'zh-CN-XiaoyiNeural（女声）' },
+  { value: 'zh-CN-YunjianNeural', label: 'zh-CN-YunjianNeural（男声）' },
+  { value: 'zh-CN-YunxiNeural', label: 'zh-CN-YunxiNeural（男声）' },
+  { value: 'zh-CN-YunxiaNeural', label: 'zh-CN-YunxiaNeural（男声）' },
+  { value: 'zh-CN-YunyangNeural', label: 'zh-CN-YunyangNeural（男声）' },
 ] as const;
 
 const TTS_PRESETS = [
