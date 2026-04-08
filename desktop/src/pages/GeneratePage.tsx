@@ -2,14 +2,14 @@ import React from 'react';
 import ConfigSelect from '../components/config/ConfigSelect';
 import TranscriptPanel from '../components/TranscriptPanel';
 import { logger } from '../utils/logger';
-import { AppConfig, GenerateConversationInput, RecordingState, TranscriptSegment } from '../types';
+import { AppConfig, GenerateBusyState, GenerateConversationInput, RecordingState, TranscriptSegment } from '../types';
 
 interface GeneratePageProps {
   config: AppConfig;
   transcript: TranscriptSegment[];
   onGenerate: (params: GenerateConversationInput) => Promise<void>;
   onGenerateAudio: () => Promise<void>;
-  busy: boolean;
+  busy: GenerateBusyState;
 }
 
 const DEFAULT_FORM: GenerateConversationInput = {
@@ -70,7 +70,9 @@ export default function GeneratePage({
   const hasScenario = form.scenario.trim().length > 0;
   const canGenerate = Boolean(selectedLlm?.apiKey && selectedLlm?.baseUrl && selectedLlm?.model && hasScenario);
   const hasValidDefaultTts = Boolean(defaultTts?.salesVoice?.trim() && defaultTts?.customerVoice?.trim() && (defaultTts.provider === 'edge' || defaultTts.baseUrl?.trim()));
-  const recordingState: RecordingState = busy ? 'processing' : transcript.length > 0 ? 'done' : 'idle';
+  const isGeneratingConversation = busy.generatingConversation;
+  const isGeneratingAudio = busy.generatingAudio;
+  const recordingState: RecordingState = isGeneratingConversation ? 'processing' : transcript.length > 0 ? 'done' : 'idle';
 
   function updateForm<Key extends keyof GenerateConversationInput>(key: Key, value: GenerateConversationInput[Key]) {
     setForm(prev => ({ ...prev, [key]: value }));
@@ -161,10 +163,10 @@ export default function GeneratePage({
                 <button
                   className="primary-button generate-form-submit"
                   onClick={handleGenerate}
-                  disabled={busy || !canGenerate || !selectedLlmId}
+                  disabled={isGeneratingConversation || !canGenerate || !selectedLlmId}
                   type="button"
                 >
-                  {busy ? '脑力激荡中...' : '开始生成对话'}
+                  {isGeneratingConversation ? '脑力激荡中...' : '开始生成对话'}
                 </button>
 
                 {transcript.length > 0 ? (
@@ -174,8 +176,8 @@ export default function GeneratePage({
                         ? `当前音频合成将使用默认 TTS：${defaultTts.title || defaultTts.ttsModel || '未命名 TTS'}。如需切换，请前往 TTS 配置页修改默认配置。`
                         : '当前默认 TTS 不可用，请先到 TTS 配置页补全并保存默认配置。'}
                     </div>
-                    <button className="success-button generate-form-submit" onClick={onGenerateAudio} disabled={busy} type="button">
-                      同步合成本地音频
+                    <button className="success-button generate-form-submit" onClick={onGenerateAudio} disabled={isGeneratingConversation || isGeneratingAudio} type="button">
+                      {isGeneratingAudio ? '正在合成音频...' : '同步合成本地音频'}
                     </button>
                   </div>
                 ) : null}

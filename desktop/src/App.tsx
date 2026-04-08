@@ -17,6 +17,7 @@ import {
   WorkspaceData,
   GenerateConversationInput,
   GenerateConversationOutput,
+  GenerateBusyState,
 } from './types';
 
 // Constants & Defaults
@@ -42,7 +43,10 @@ export default function App() {
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [activeNav, setActiveNav] = useState<NavigationItemId>('generate');
   const [transcript, setTranscript] = useState<TranscriptSegment[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<GenerateBusyState>({
+    generatingConversation: false,
+    generatingAudio: false,
+  });
   const [audioFiles, setAudioFiles] = useState<AudioFileItem[]>([]);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [configSaveState, setConfigSaveState] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
@@ -117,7 +121,7 @@ export default function App() {
 
   // 生成对话是桌面端的主链路：发请求、接收 transcript、失败时统一弹窗。
   async function handleGenerateConversation(params: GenerateConversationInput) {
-    setBusy(true);
+    setBusy(current => ({ ...current, generatingConversation: true }));
     setGenerateDialog(null);
     setTranscript([]);
     try {
@@ -136,13 +140,13 @@ export default function App() {
         tone: 'error',
       });
     } finally {
-      setBusy(false);
+      setBusy(current => ({ ...current, generatingConversation: false }));
     }
   }
 
   async function handleGenerateAudio() {
     if (transcript.length === 0) return;
-    setBusy(true);
+    setBusy(current => ({ ...current, generatingAudio: true }));
     try {
       logger.info('audio', '开始生成音频', { transcriptSize: transcript.length });
       const result = await invoke<{ audioFiles: AudioFileItem[]; mergedFile: AudioFileItem }>('generate_audio', {
@@ -171,7 +175,7 @@ export default function App() {
         tone: 'error',
       });
     } finally {
-      setBusy(false);
+      setBusy(current => ({ ...current, generatingAudio: false }));
     }
   }
 
@@ -269,7 +273,7 @@ interface MainContentProps {
   onSaveConfig: () => Promise<void>;
   configSaveState: 'idle' | 'saving' | 'success' | 'error';
   hasUnsavedChanges: boolean;
-  busy: boolean;
+  busy: GenerateBusyState;
 }
 
 function MainContent({ activeNav, config, setConfig, savedConfigSnapshot, transcript, audioFiles, playingId, onPlay, onGenerateConv, onGenerateAudio, onSaveConfig, configSaveState, hasUnsavedChanges, busy }: MainContentProps) {
@@ -280,7 +284,7 @@ function MainContent({ activeNav, config, setConfig, savedConfigSnapshot, transc
       return (
         <div className="page-view flex-col animate-fade-in">
           <StorageHeader config={config} setConfig={setConfig} />
-          <AudioPage audioFiles={audioFiles} playingId={playingId} onPlay={onPlay} busy={busy} />
+          <AudioPage audioFiles={audioFiles} playingId={playingId} onPlay={onPlay} busy={busy.generatingAudio} />
         </div>
       );
     case 'llm':

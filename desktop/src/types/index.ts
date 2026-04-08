@@ -14,7 +14,6 @@ export interface TranscriptSegment {
     keywords?: string[];
 }
 
-
 export interface SelectOption {
     label: string;
     value: string;
@@ -104,7 +103,7 @@ export interface AppConfig {
     llmEndpoints: LlmEndpointConfig[];
     activeTtsId: string;
     ttsEndpoints: TtsEndpointConfig[];
-    
+
     fallbackModel: string;
     audioDir: string;
     databasePath: string;
@@ -190,4 +189,9 @@ export interface GenerateAudioOutput {
 export interface HealthStatus {
     system: StatusCheckItem[];
     message: string;
+}
+
+export interface GenerateBusyState {
+    generatingConversation: boolean;
+    generatingAudio: boolean;
 }

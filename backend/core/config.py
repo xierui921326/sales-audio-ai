@@ -27,37 +27,83 @@ def _base_storage_root() -> Path:
 
 def default_storage_dir() -> Path:
     """返回跨平台的应用支持目录。"""
-    return _base_storage_root() / _APP_IDENTIFIER / "backend"
+    return _base_storage_root() / _APP_IDENTIFIER
 
 
 def legacy_storage_dir() -> Path:
-    """返回历史遗留的应用支持目录。"""
+    """返回历史遗留的旧 backend 子目录。"""
     return _base_storage_root() / _LEGACY_APP_NAME / "backend"
 
 
-def migrate_legacy_storage_dir() -> None:
-    """将旧目录中的数据安全迁移到新目录。"""
-    legacy_dir = legacy_storage_dir()
-    target_dir = default_storage_dir()
+def legacy_root_storage_dir() -> Path:
+    """返回历史遗留的旧应用根目录。"""
+    return _base_storage_root() / _LEGACY_APP_NAME
 
-    if legacy_dir == target_dir or not legacy_dir.exists():
+
+def nested_storage_dir() -> Path:
+    """返回当前应用下遗留的 backend 子目录。"""
+    return default_storage_dir() / "backend"
+
+
+def _merge_db_file(source: Path, destination: Path) -> None:
+    if not source.exists():
+        return
+    if destination.exists():
+        logger.info(f"跳过旧数据库迁移（目标已存在）: {source} -> {destination}")
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(destination))
+    logger.info(f"已迁移旧数据库: {source} -> {destination}")
+
+
+def _merge_audio_dir(source: Path, destination: Path) -> None:
+    if not source.exists() or not source.is_dir():
         return
 
+    destination.mkdir(parents=True, exist_ok=True)
+    for item in source.iterdir():
+        target = destination / item.name
+        if target.exists():
+            logger.info(f"跳过旧音频迁移项（目标已存在）: {item} -> {target}")
+            continue
+        shutil.move(str(item), str(target))
+        logger.info(f"已迁移旧音频文件: {item} -> {target}")
+
+
+def _cleanup_empty_dir(path: Path) -> None:
+    if not path.exists() or not path.is_dir():
+        return
+    try:
+        path.rmdir()
+        logger.info(f"已移除空目录: {path}")
+    except OSError:
+        logger.info(f"目录仍保留（存在未迁移内容）: {path}")
+
+
+def migrate_legacy_storage_dir() -> None:
+    """将旧目录中的数据库与音频安全归并到统一目录。"""
+    target_dir = default_storage_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    for source in legacy_dir.iterdir():
-        destination = target_dir / source.name
-        if destination.exists():
-            logger.info(f"跳过旧目录迁移项（目标已存在）: {destination}")
-            continue
-        shutil.move(str(source), str(destination))
-        logger.info(f"已迁移旧目录数据: {source} -> {destination}")
+    legacy_root_dir = legacy_root_storage_dir()
+    legacy_backend_dir = legacy_storage_dir()
+    nested_backend_dir = nested_storage_dir()
 
-    try:
-        legacy_dir.rmdir()
-        logger.info(f"已移除空旧目录: {legacy_dir}")
-    except OSError:
-        logger.info(f"旧目录仍保留（存在未迁移内容）: {legacy_dir}")
+    _merge_db_file(legacy_root_dir / "app.db", target_dir / "app.db")
+    _merge_audio_dir(legacy_root_dir / "audio", target_dir / "audio")
+
+    _merge_db_file(legacy_backend_dir / "app.db", target_dir / "app.db")
+    _merge_audio_dir(legacy_backend_dir / "audio", target_dir / "audio")
+
+    _merge_db_file(nested_backend_dir / "app.db", target_dir / "app.db")
+    _merge_audio_dir(nested_backend_dir / "audio", target_dir / "audio")
+
+    _cleanup_empty_dir(legacy_backend_dir / "audio")
+    _cleanup_empty_dir(legacy_backend_dir)
+    _cleanup_empty_dir(legacy_root_dir / "audio")
+    _cleanup_empty_dir(legacy_root_dir)
+    _cleanup_empty_dir(nested_backend_dir / "audio")
+    _cleanup_empty_dir(nested_backend_dir)
 
 
 class Settings(BaseSettings):

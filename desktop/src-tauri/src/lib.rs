@@ -550,7 +550,22 @@ fn decode_mp3_to_wav_samples(bytes: &[u8]) -> Result<(hound::WavSpec, Vec<i16>),
     Ok((spec, samples))
 }
 
-fn merge_mp3_segments_to_wav(path: &Path, chunks: &[Vec<u8>]) -> Result<(), String> {
+fn decode_wav_to_samples(bytes: &[u8]) -> Result<(hound::WavSpec, Vec<i16>), String> {
+    let cursor = std::io::Cursor::new(bytes);
+    let mut reader = hound::WavReader::new(cursor).map_err(|e| format!("解析 WAV 失败: {e}"))?;
+    let spec = reader.spec();
+    if spec.bits_per_sample != 16 || spec.sample_format != hound::SampleFormat::Int {
+        return Err("当前仅支持 16-bit PCM WAV 合并".into());
+    }
+
+    let samples = reader
+        .samples::<i16>()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("读取 WAV 采样失败: {e}"))?;
+    Ok((spec, samples))
+}
+
+fn merge_audio_segments_to_wav(path: &Path, chunks: &[Vec<u8>]) -> Result<(), String> {
     if chunks.is_empty() {
         return Err("没有可合并的音频片段".into());
     }
@@ -559,7 +574,11 @@ fn merge_mp3_segments_to_wav(path: &Path, chunks: &[Vec<u8>]) -> Result<(), Stri
     let mut target_spec: Option<hound::WavSpec> = None;
 
     for chunk in chunks {
-        let (spec, samples) = decode_mp3_to_wav_samples(chunk)?;
+        let (spec, samples) = if is_mp3_audio(chunk) {
+            decode_mp3_to_wav_samples(chunk)?
+        } else {
+            decode_wav_to_samples(chunk)?
+        };
         if let Some(existing) = &target_spec {
             if existing.channels != spec.channels || existing.sample_rate != spec.sample_rate {
                 return Err("音频片段采样率或声道数不一致，暂时无法合并".into());
@@ -776,8 +795,28 @@ fn default_workspace(app: &AppHandle) -> Result<WorkspaceData, String> {
 }
 
 fn normalize_config_paths(app: &AppHandle, config: &mut AppConfig) -> Result<(), String> {
-    if config.audio_dir.trim().is_empty() || config.audio_dir.trim() == "./storage/audio" {
-        config.audio_dir = default_audio_dir(app)?;
+    let default_audio = default_audio_dir(app)?;
+    let normalized_default_audio = PathBuf::from(&default_audio);
+    let current_audio = config.audio_dir.trim();
+
+    if current_audio.is_empty() || current_audio == "./storage/audio" {
+        config.audio_dir = default_audio;
+    } else {
+        let candidate = PathBuf::from(current_audio);
+        let normalized_candidate = if candidate.is_absolute() {
+            candidate
+        } else {
+            app_data_dir(app)?.join(current_audio.trim_start_matches("./"))
+        };
+
+        let is_legacy_backend_audio = normalized_candidate == app_data_dir(app)?.join("backend").join("audio");
+        let is_legacy_root_audio = normalized_candidate == app_data_dir(app)?.join("audio");
+
+        if is_legacy_backend_audio || is_legacy_root_audio {
+            config.audio_dir = normalized_default_audio.to_string_lossy().to_string();
+        } else {
+            config.audio_dir = normalized_candidate.to_string_lossy().to_string();
+        }
     }
     config.database_path = resolved_database_path(app)?;
     config.config_file = resolved_config_file();
@@ -1327,12 +1366,7 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
         return Err("未生成任何可用音频片段，请检查当前 TTS 配置后重试。".into());
     }
 
-    let merged_extension = if merged_chunks.iter().all(|chunk| is_mp3_audio(chunk)) {
-        "wav"
-    } else {
-        segment_extension
-    };
-    let merged_name = format!("merged_task.{}", merged_extension);
+    let merged_name = "merged_task.wav".to_string();
     let merged_path = output_dir.join(&merged_name);
     let merged_text = input
         .transcript
@@ -1341,18 +1375,11 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
         .collect::<Vec<_>>()
         .join("\n");
 
-    if merged_chunks.iter().all(|chunk| is_mp3_audio(chunk)) {
-        merge_mp3_segments_to_wav(&merged_path, &merged_chunks)?;
-    } else if merged_chunks.len() == 1 {
-        fs::write(&merged_path, &merged_chunks[0]).map_err(|e| format!("写入合并音频失败: {e}"))?;
-    } else {
-        return Err("当前 TTS 返回的音频格式暂不支持多片段直接合并，请改用 OpenAI / ElevenLabs，或减少为单句后再试。".into());
-    }
+    merge_audio_segments_to_wav(&merged_path, &merged_chunks)?;
 
     println!(
-        "[sales-audio-ai][audio] 合并音频输出完成 provider={} ext={} path={}",
+        "[sales-audio-ai][audio] 合并音频输出完成 provider={} ext=wav path={}",
         tts_config.provider,
-        merged_extension,
         merged_path.to_string_lossy()
     );
 
