@@ -1,5 +1,7 @@
 """AudioFile ORM 模型。"""
 
+from typing import Optional
+
 from sqlalchemy import Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -16,7 +18,7 @@ class AudioFile(Base):
         Integer, ForeignKey("dialog_scripts.id", ondelete="CASCADE"), nullable=False, unique=True
     )
     file_path: Mapped[str] = mapped_column(String, nullable=False)
-    duration: Mapped[float | None] = mapped_column(Float, nullable=True)
+    duration: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     script: Mapped["DialogScript"] = relationship(  # noqa: F821
         "DialogScript", back_populates="audio_file"

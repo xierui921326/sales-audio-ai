@@ -1,5 +1,6 @@
 use chrono::Local;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -97,11 +98,11 @@ struct AppConfig {
 
     #[serde(default = "default_fallback_model")]
     fallback_model: String,
-    #[serde(default = "default_audio_dir")]
+    #[serde(default)]
     audio_dir: String,
-    #[serde(default = "default_database_path")]
+    #[serde(default)]
     database_path: String,
-    #[serde(default = "default_config_file")]
+    #[serde(default)]
     config_file: String,
 
     #[serde(default)]
@@ -586,6 +587,68 @@ fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| format!("无法获取应用数据目录: {e}"))
 }
 
+fn workspace_db_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_data_dir(app)?.join("app.db"))
+}
+
+fn legacy_workspace_file(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_data_dir(app)?.join("workspace.json"))
+}
+
+fn open_workspace_db(app: &AppHandle) -> Result<Connection, String> {
+    let db_path = workspace_db_path(app)?;
+    if let Some(parent) = db_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建应用数据目录失败: {e}"))?;
+    }
+
+    let conn = Connection::open(&db_path).map_err(|e| format!("打开应用数据库失败: {e}"))?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+        [],
+    )
+    .map_err(|e| format!("初始化应用数据库失败: {e}"))?;
+    Ok(conn)
+}
+
+fn load_workspace_from_db(app: &AppHandle) -> Result<Option<WorkspaceData>, String> {
+    let conn = open_workspace_db(app)?;
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT value FROM app_state WHERE key = ?1",
+            params!["workspace"],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| format!("读取工作区数据失败: {e}"))?;
+
+    raw.map(|text| serde_json::from_str(&text).map_err(|e| format!("解析工作区数据失败: {e}")))
+        .transpose()
+}
+
+fn persist_workspace_to_db(app: &AppHandle, workspace: &WorkspaceData) -> Result<(), String> {
+    let conn = open_workspace_db(app)?;
+    let text = serde_json::to_string(workspace).map_err(|e| format!("序列化工作区失败: {e}"))?;
+    conn.execute(
+        "INSERT INTO app_state(key, value) VALUES(?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params!["workspace", text],
+    )
+    .map_err(|e| format!("写入工作区数据失败: {e}"))?;
+    Ok(())
+}
+
+fn default_audio_dir(app: &AppHandle) -> Result<String, String> {
+    Ok(app_data_dir(app)?.join("audio").to_string_lossy().to_string())
+}
+
+fn resolved_database_path(app: &AppHandle) -> Result<String, String> {
+    Ok(workspace_db_path(app)?.to_string_lossy().to_string())
+}
+
+fn resolved_config_file() -> String {
+    "内置 SQLite 配置".into()
+}
+
 fn now_text() -> String {
     Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
@@ -596,13 +659,16 @@ fn default_fallback_model() -> String {
 
 fn ensure_output_dir(data_dir: &Path, requested_audio_dir: &str) -> Result<PathBuf, String> {
     let audio_dir = requested_audio_dir.trim();
-    let relative_dir = if audio_dir.is_empty() {
-        default_audio_dir()
-    } else {
-        audio_dir.to_string()
-    };
+    if audio_dir.is_empty() {
+        return Ok(data_dir.join("audio"));
+    }
 
-    Ok(data_dir.join(relative_dir.replace("./", "")))
+    let candidate = PathBuf::from(audio_dir);
+    if candidate.is_absolute() {
+        return Ok(candidate);
+    }
+
+    Ok(data_dir.join(audio_dir.trim_start_matches("./")))
 }
 
 fn audio_file_extension(provider: &str) -> &'static str {
@@ -617,21 +683,8 @@ fn merged_audio_title() -> String {
     "合并音频".into()
 }
 
-
-fn default_audio_dir() -> String {
-    "./storage/audio".into()
-}
-
-fn default_database_path() -> String {
-    "./app.db".into()
-}
-
-fn default_config_file() -> String {
-    "config.json".into()
-}
-
-fn default_config() -> AppConfig {
-    AppConfig {
+fn default_config(app: &AppHandle) -> Result<AppConfig, String> {
+    Ok(AppConfig {
         active_llm_id: "default-llm".into(),
         llm_endpoints: vec![LlmEndpointConfig {
             id: "default-llm".into(),
@@ -653,16 +706,16 @@ fn default_config() -> AppConfig {
             customer_voice: "zh-CN-XiaoxiaoNeural".into(),
         }],
         fallback_model: default_fallback_model(),
-        audio_dir: default_audio_dir(),
-        database_path: default_database_path(),
-        config_file: default_config_file(),
+        audio_dir: default_audio_dir(app)?,
+        database_path: resolved_database_path(app)?,
+        config_file: resolved_config_file(),
         ..Default::default()
-    }
+    })
 }
 
-fn default_workspace() -> WorkspaceData {
-    WorkspaceData {
-        config: default_config(),
+fn default_workspace(app: &AppHandle) -> Result<WorkspaceData, String> {
+    Ok(WorkspaceData {
+        config: default_config(app)?,
         prompts: vec![
             PromptTemplate {
                 id: "p1".into(),
@@ -719,29 +772,39 @@ fn default_workspace() -> WorkspaceData {
                 created_at: now_text(),
             },
         ],
-    }
+    })
 }
 
-fn workspace_file(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app_data_dir(app)?.join("workspace.json"))
+fn normalize_config_paths(app: &AppHandle, config: &mut AppConfig) -> Result<(), String> {
+    if config.audio_dir.trim().is_empty() || config.audio_dir.trim() == "./storage/audio" {
+        config.audio_dir = default_audio_dir(app)?;
+    }
+    config.database_path = resolved_database_path(app)?;
+    config.config_file = resolved_config_file();
+    Ok(())
 }
 
 fn ensure_workspace(app: &AppHandle) -> Result<WorkspaceData, String> {
-    let path = workspace_file(app)?;
-    if !path.exists() {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("创建工作区目录失败: {e}"))?;
-        }
-        let workspace = default_workspace();
-        let text = serde_json::to_string_pretty(&workspace).map_err(|e| format!("序列化工作区失败: {e}"))?;
-        fs::write(&path, text).map_err(|e| format!("写入工作区文件失败: {e}"))?;
-        println!("[sales-audio-ai][workspace] 首次创建工作区 path={}", path.to_string_lossy());
+    if let Some(mut workspace) = load_workspace_from_db(app)? {
+        normalize_config_paths(app, &mut workspace.config)?;
+        persist_workspace_to_db(app, &workspace)?;
         return Ok(workspace);
     }
 
-    let content = fs::read_to_string(&path).map_err(|e| format!("读取工作区文件失败: {e}"))?;
-    let value: serde_json::Value = serde_json::from_str(&content).map_err(|e| format!("解析工作区文件失败: {e}"))?;
-    let mut workspace: WorkspaceData = serde_json::from_value(value.clone()).map_err(|e| format!("解析工作区文件失败: {e}"))?;
+    let legacy_path = legacy_workspace_file(app)?;
+    if !legacy_path.exists() {
+        let workspace = default_workspace(app)?;
+        persist_workspace_to_db(app, &workspace)?;
+        println!(
+            "[sales-audio-ai][workspace] 首次创建 SQLite 工作区 db={}",
+            workspace_db_path(app)?.to_string_lossy()
+        );
+        return Ok(workspace);
+    }
+
+    let content = fs::read_to_string(&legacy_path).map_err(|e| format!("读取历史工作区文件失败: {e}"))?;
+    let value: serde_json::Value = serde_json::from_str(&content).map_err(|e| format!("解析历史工作区文件失败: {e}"))?;
+    let mut workspace: WorkspaceData = serde_json::from_value(value.clone()).map_err(|e| format!("解析历史工作区文件失败: {e}"))?;
 
     let mut modified = false;
     if workspace.config.llm_endpoints.is_empty() && !workspace.config.llm_provider.is_empty() {
@@ -771,21 +834,21 @@ fn ensure_workspace(app: &AppHandle) -> Result<WorkspaceData, String> {
         modified = true;
     }
 
+    normalize_config_paths(app, &mut workspace.config)?;
     let normalized = serde_json::to_value(&workspace).map_err(|e| format!("序列化工作区失败: {e}"))?;
     if normalized != value || modified {
-        save_workspace(app, &workspace)?;
-        println!("[sales-audio-ai][workspace] 工作区已自动迁移 path={}", path.to_string_lossy());
+        println!(
+            "[sales-audio-ai][workspace] 历史工作区已迁移到 SQLite legacy={} db={}",
+            legacy_path.to_string_lossy(),
+            workspace_db_path(app)?.to_string_lossy()
+        );
     }
+    persist_workspace_to_db(app, &workspace)?;
     Ok(workspace)
 }
 
 fn save_workspace(app: &AppHandle, workspace: &WorkspaceData) -> Result<(), String> {
-    let path = workspace_file(app)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("创建工作区目录失败: {e}"))?;
-    }
-    let text = serde_json::to_string_pretty(workspace).map_err(|e| format!("序列化工作区失败: {e}"))?;
-    fs::write(path, text).map_err(|e| format!("写入工作区失败: {e}"))
+    persist_workspace_to_db(app, workspace)
 }
 
 
@@ -1359,10 +1422,9 @@ async fn pick_path(app: AppHandle, kind: String) -> Result<String, String> {
 #[tauri::command]
 fn get_health_status(app: AppHandle) -> Result<HealthStatus, String> {
     println!("[sales-audio-ai][health] 收到 get_health_status 请求");
-    let data_dir = app_data_dir(&app)?;
     let workspace = ensure_workspace(&app)?;
-    let audio_dir = data_dir.join(workspace.config.audio_dir.replace("./", ""));
-    let config_file = workspace_file(&app)?;
+    let audio_dir = ensure_output_dir(&app_data_dir(&app)?, &workspace.config.audio_dir)?;
+    let config_file = workspace_db_path(&app)?;
 
     Ok(HealthStatus {
         system: vec![

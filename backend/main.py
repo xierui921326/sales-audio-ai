@@ -14,14 +14,17 @@ from loguru import logger
 from api.audio_controller import router as audio_router
 from api.config_controller import router as config_router
 from api.dialog_controller import router as dialog_router
-from core.config import settings
+from core.config import migrate_legacy_storage_dir, settings
+from core.config_store import load_runtime_config
 from core.database import init_db
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用启动时初始化数据库和存储目录。"""
+    migrate_legacy_storage_dir()
     _ensure_dirs()
+    load_runtime_config()
     init_db()
     logger.info("sales-audio-ai 启动完成")
     yield
@@ -39,7 +42,7 @@ def _ensure_dirs() -> None:
 app = FastAPI(
     title="Sales Audio AI",
     description="销售对话与音频自动生成系统",
-    version="0.1.0",
+    version="1.0.0",
     lifespan=lifespan,
 )
 

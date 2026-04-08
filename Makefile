@@ -50,7 +50,7 @@ backend-start: ## 启动后端生产服务器
 # -----------------------------------------------------------
 .PHONY: backend-db-clean
 backend-db-clean: ## 删除本地 SQLite 数据库（谨慎操作）
-	rm -f $(BACKEND_DIR)/storage/app.db
+	$(PYTHON) -c "from backend.core.config import settings; print(settings.db_path)" | xargs rm -f
 	echo "数据库已清除"
 
 # -----------------------------------------------------------

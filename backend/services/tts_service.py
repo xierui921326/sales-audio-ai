@@ -1,16 +1,18 @@
-"""TTS 服务：使用 edge-tts 将文本转换为 WAV 音频文件。"""
+"""TTS 服务：使用 edge-tts 将文本转换为音频文件。"""
 
+import contextlib
 import wave
 from pathlib import Path
 
 import edge_tts
 from loguru import logger
+from pydub import AudioSegment
 
 from core.config import settings
 
 VOICE_MAP: dict[str, str] = {
-    "sales": "zh-CN-YunxiNeural",
-    "customer": "zh-CN-XiaoyiNeural",
+    "sales": settings.tts_voice_sales,
+    "customer": settings.tts_voice_customer,
 }
 
 
@@ -24,22 +26,12 @@ class TTSService:
 
     def _file_path(self, task_id: int, index: int, role: str) -> Path:
         """按命名规则构建音频文件路径。"""
-        return self._audio_dir / f"task_{task_id}_{index}_{role}.wav"
+        return self._audio_dir / f"task_{task_id}_{index}_{role}.mp3"
 
     async def generate_for_script(
         self, task_id: int, index: int, role: str, text: str
     ) -> tuple[Path, float]:
-        """为单条对话脚本生成音频。
-
-        Args:
-            task_id: 任务 ID。
-            index: 对话行序号。
-            role: 角色名称（"sales" 或 "customer"）。
-            text: 对话文本内容。
-
-        Returns:
-            (音频文件 Path, 时长秒数) 元组。
-        """
+        """为单条对话脚本生成音频。"""
         voice = VOICE_MAP.get(role, VOICE_MAP["sales"])
         output_path = self._file_path(task_id, index, role)
         logger.info(f"TTS: voice={voice}, text={text[:20]!r}")
@@ -49,17 +41,25 @@ class TTSService:
         except Exception as e:
             logger.error(f"TTS 失败: {e}")
             raise RuntimeError(f"TTS 失败: {e}") from e
-        duration = _wav_duration(output_path)
+        duration = _audio_duration(output_path)
         return output_path, duration
 
 
-def _wav_duration(path: Path) -> float:
-    """读取 WAV 文件时长（秒），失败返回 0.0。"""
+def _audio_duration(path: Path) -> float:
+    """读取音频文件时长（秒），失败返回 0.0。"""
     try:
-        with wave.open(str(path), "rb") as wf:
-            return wf.getnframes() / float(wf.getframerate())
+        if path.suffix.lower() == ".wav":
+            with contextlib.closing(wave.open(str(path), "rb")) as wf:
+                return wf.getnframes() / float(wf.getframerate())
+        return len(AudioSegment.from_file(str(path))) / 1000.0
     except Exception:
         return 0.0
 
 
 tts_service = TTSService()
+
+
+# 运行时配置更新后，直接复用同一个服务实例，只需要同步目录即可。
+def refresh_audio_dir() -> None:
+    tts_service._audio_dir = settings.audio_path
+    tts_service._audio_dir.mkdir(parents=True, exist_ok=True)

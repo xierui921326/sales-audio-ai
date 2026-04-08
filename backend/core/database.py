@@ -7,6 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from core.config import settings
+from core.config_store import init_config_db, load_runtime_config
 
 
 class Base(DeclarativeBase):
@@ -14,13 +15,15 @@ class Base(DeclarativeBase):
 
 
 def init_db() -> None:
-    """创建所有数据表（如不存在）。"""
+    """创建所有数据表（如不存在），并初始化配置表。"""
     # 延迟导入，确保模型已注册到 Base.metadata
     import models.audio_file  # noqa: F401
     import models.dialog_script  # noqa: F401
     import models.dialog_task  # noqa: F401
 
     settings.storage_dir.mkdir(parents=True, exist_ok=True)
+    init_config_db()
+    load_runtime_config()
     engine = _get_engine()
     Base.metadata.create_all(bind=engine)
     logger.info("数据库初始化完成")

@@ -1,5 +1,7 @@
 """DialogScript ORM 模型。"""
 
+from typing import Optional
+
 from sqlalchemy import ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -22,7 +24,7 @@ class DialogScript(Base):
     task: Mapped["DialogTask"] = relationship(  # noqa: F821
         "DialogTask", back_populates="scripts"
     )
-    audio_file: Mapped["AudioFile | None"] = relationship(  # noqa: F821
+    audio_file: Mapped[Optional["AudioFile"]] = relationship(  # noqa: F821
         "AudioFile",
         back_populates="script",
         uselist=False,

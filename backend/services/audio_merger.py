@@ -1,4 +1,4 @@
-"""音频合并服务：使用 pydub 将多段 WAV 合并为单文件。"""
+"""音频合并服务：使用 pydub 将多段音频合并为单文件。"""
 
 from pathlib import Path
 
@@ -11,7 +11,7 @@ _SILENCE_MS = 300
 
 
 class AudioMerger:
-    """将多段 WAV 按顺序合并，段间插入 300ms 静音。"""
+    """将多段音频按顺序合并，段间插入 300ms 静音。"""
 
     def __init__(self) -> None:
         """确保输出目录存在。"""
@@ -22,7 +22,7 @@ class AudioMerger:
 
         Args:
             task_id: 任务 ID，用于命名输出文件。
-            file_paths: 按顺序排列的 WAV 文件路径。
+            file_paths: 按顺序排列的音频文件路径。
 
         Returns:
             合并后输出文件的 Path。
@@ -39,7 +39,7 @@ class AudioMerger:
 
         try:
             for i, fp in enumerate(file_paths):
-                seg = AudioSegment.from_wav(str(fp))
+                seg = AudioSegment.from_file(str(fp))
                 if i > 0:
                     combined += silence
                 combined += seg

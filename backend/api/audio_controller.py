@@ -1,6 +1,7 @@
 """音频生成 API 控制器。"""
 
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
@@ -34,8 +35,8 @@ class AudioOut(BaseModel):
     id: int
     script_id: int
     file_path: str
-    duration: float | None
-    script: ScriptInfo | None = None
+    duration: Optional[float]
+    script: Optional[ScriptInfo] = None
 
     model_config = {"from_attributes": True}
 

@@ -1,6 +1,6 @@
 [package]
 name = "sales-audio-ai"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 
 [lib]
@@ -26,3 +26,4 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 base64 = "0.22"
 hound = "3.5"
 minimp3 = "0.5"
+rusqlite = { version = "0.32", features = ["bundled"] }

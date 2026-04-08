@@ -1,7 +1,7 @@
 {
   "productName": "Sales Audio AI",
-  "version": "0.1.0",
-  "identifier": "com.sales-audio-ai.app",
+  "version": "1.0.0",
+  "identifier": "com.xier.sales-audio-ai",
   "build": {
     "beforeDevCommand": "pnpm dev --host 127.0.0.1 --port 4173",
     "beforeBuildCommand": "pnpm build",

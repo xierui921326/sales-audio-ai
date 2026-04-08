@@ -7,12 +7,10 @@ interface StorageHeaderProps {
   setConfig: Dispatch<SetStateAction<AppConfig>>;
 }
 
-const DEFAULT_AUDIO_DIR = './storage/audio';
-
 export default function StorageHeader({ config, setConfig }: StorageHeaderProps) {
   const displayPath = useMemo(() => {
     const nextPath = config.audioDir.trim();
-    return nextPath || `${DEFAULT_AUDIO_DIR}（默认目录）`;
+    return nextPath || '未设置存储目录';
   }, [config.audioDir]);
 
   // 音频目录由音频页统一维护，生成与导出链路都直接读取这里的配置。

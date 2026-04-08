@@ -1,9 +1,16 @@
 """LLM 服务：封装大语言模型调用，支持多模型扩展。"""
 
 from loguru import logger
-from openai import AsyncOpenAI
 
 from core.config import settings
+
+try:
+    from openai import AsyncOpenAI
+except ImportError:  # 兼容旧版 openai SDK（如 0.28.x）
+    AsyncOpenAI = None
+    import openai
+else:
+    openai = None
 
 
 class LLMService:
@@ -14,12 +21,25 @@ class LLMService:
     """
 
     def __init__(self) -> None:
-        """初始化 OpenAI 异步客户端。"""
-        self._client = AsyncOpenAI(
-            api_key=settings.openai_api_key,
-            base_url=settings.base_url,
-        )
+        """初始化 OpenAI 客户端。"""
+        self._client = self._build_client()
         logger.info(f"LLMService 初始化: model={settings.llm_model}, base_url={settings.base_url}")
+
+    def _build_client(self):
+        """按当前 SDK 版本创建客户端。"""
+        if AsyncOpenAI is not None:
+            return AsyncOpenAI(
+                api_key=settings.openai_api_key,
+                base_url=settings.base_url,
+            )
+
+        openai.api_key = settings.openai_api_key
+        openai.api_base = settings.base_url
+        return openai
+
+    def refresh_client(self) -> None:
+        """配置变更后重建客户端。"""
+        self._client = self._build_client()
 
     async def generate_dialog(self, prompt: str) -> str:
         """调用 LLM 生成对话文本。
@@ -35,13 +55,22 @@ class LLMService:
         """
         logger.info(f"调用 LLM: model={settings.llm_model}, prompt_len={len(prompt)}")
         try:
-            response = await self._client.chat.completions.create(
-                model=settings.llm_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.8,
-                max_tokens=2048,
-            )
-            text = response.choices[0].message.content or ""
+            if AsyncOpenAI is not None:
+                response = await self._client.chat.completions.create(
+                    model=settings.llm_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.8,
+                    max_tokens=2048,
+                )
+                text = response.choices[0].message.content or ""
+            else:
+                response = await self._client.ChatCompletion.acreate(
+                    model=settings.llm_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.8,
+                    max_tokens=2048,
+                )
+                text = response["choices"][0]["message"].get("content", "") or ""
             logger.info(f"LLM 返回: {len(text)} 字符")
             return text
         except Exception as e:
