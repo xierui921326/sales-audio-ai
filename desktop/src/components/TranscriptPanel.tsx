@@ -9,6 +9,7 @@ interface Props {
 export default function TranscriptPanel({ transcript, recordingState }: Props) {
     const bottomRef = useRef<HTMLDivElement>(null);
 
+    // 新对话进来后自动滚到底部，避免用户每次生成后还要手动下拉查看最新内容。
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [transcript]);
@@ -56,6 +57,7 @@ function SegmentBubble({ segment }: { segment: TranscriptSegment }) {
         return `${m}:${sec}`;
     };
 
+    // 关键词高亮是可选增强，不影响正文展示；没有关键词时直接返回原文。
     const renderText = (text: string, keywords?: string[]) => {
         if (!keywords || keywords.length === 0) return text;
         const pattern = new RegExp(`(${keywords.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi');

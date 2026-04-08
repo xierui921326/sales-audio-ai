@@ -24,6 +24,7 @@ interface LlmConfigPageProps {
 }
 
 export default function LlmConfigPage({ config, setConfig, savedConfigSnapshot, onSaveConfig, configSaveState, hasUnsavedChanges }: LlmConfigPageProps) {
+  // 配置页负责维护“默认 LLM”，生成页里的下拉只影响当前这一次生成任务。
   const [selectedEndpointId, setSelectedEndpointId] = useState(config.activeLlmId || config.llmEndpoints[0]?.id || '');
   const activeEndpoint = config.llmEndpoints.find((e) => e.id === selectedEndpointId);
   const defaultEndpointId = config.activeLlmId;

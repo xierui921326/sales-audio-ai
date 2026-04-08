@@ -6,6 +6,7 @@ import GeneratePage from './pages/GeneratePage';
 import AudioPage from './pages/AudioPage';
 import LlmConfigPage from './pages/LlmConfigPage';
 import TtsConfigPage from './pages/TtsConfigPage';
+import { logger } from './utils/logger';
 
 import {
   NavigationItemId,
@@ -48,15 +49,20 @@ export default function App() {
   const [savedConfigSnapshot, setSavedConfigSnapshot] = useState<AppConfig>(DEFAULT_CONFIG);
   const [generateDialog, setGenerateDialog] = useState<GenerateDialogState>(null);
 
-  // Lifecycle
+  // 应用启动时先读取本地工作区配置，后续所有页面都基于这份配置工作。
   useEffect(() => {
     async function load() {
       try {
+        logger.info('app', '开始加载工作区');
         const workspace = await invoke<WorkspaceData>('load_workspace');
         setConfig(workspace.config);
         setSavedConfigSnapshot(workspace.config);
+        logger.info('app', '工作区加载完成', {
+          llmCount: workspace.config.llmEndpoints.length,
+          ttsCount: workspace.config.ttsEndpoints.length,
+        });
       } catch (err) {
-        console.error(err);
+        logger.error('app', '加载工作区失败', err);
       } finally {
         setConfigLoaded(true);
       }
@@ -79,26 +85,33 @@ export default function App() {
 
     setConfigSaveState('saving');
     try {
+      logger.info('config', '开始保存配置');
       const savedConfig = await invoke<AppConfig>('save_config', { config });
       setConfig(savedConfig);
       setSavedConfigSnapshot(savedConfig);
       setConfigSaveState('success');
+      logger.info('config', '配置保存成功');
     } catch (err) {
-      console.error(err);
+      logger.error('config', '配置保存失败', err);
       setConfigSaveState('error');
     }
   }
 
-  // Actions
+  // 生成对话是桌面端的主链路：发请求、接收 transcript、失败时统一弹窗。
   async function handleGenerateConversation(params: GenerateConversationInput) {
     setBusy(true);
     setGenerateDialog(null);
     setTranscript([]);
     try {
+      logger.info('generate', '开始生成对话', {
+        rounds: params.rounds,
+        llmEndpointId: params.llmEndpointId ?? '',
+      });
       const result = await invoke<GenerateConversationOutput>('generate_conversation', { input: params });
       setTranscript(result.transcript);
+      logger.info('generate', '生成对话成功', { transcriptSize: result.transcript.length });
     } catch (err) {
-      console.error(err);
+      logger.error('generate', '生成对话失败', err);
       setGenerateDialog({
         title: '生成失败',
         text: err instanceof Error ? err.message : String(err),
@@ -113,19 +126,44 @@ export default function App() {
     if (transcript.length === 0) return;
     setBusy(true);
     try {
-      await invoke('generate_audio_batch', { segments: transcript });
-      const list = await invoke<AudioFileItem[]>('list_audios');
-      setAudioFiles(list);
+      logger.info('audio', '开始生成音频', { transcriptSize: transcript.length });
+      const result = await invoke<{ audioFiles: AudioFileItem[]; mergedFile: AudioFileItem }>('generate_audio', {
+        input: {
+          transcript,
+          salesVoice: '',
+          customerVoice: '',
+          audioDir: config.audioDir,
+        },
+      });
+      setAudioFiles([...result.audioFiles, result.mergedFile]);
+      logger.info('audio', '音频生成成功', {
+        fileCount: result.audioFiles.length + 1,
+      });
     } catch (err) {
-      console.error(err);
+      logger.error('audio', '音频生成失败', err);
+      setGenerateDialog({
+        title: '音频生成失败',
+        text: err instanceof Error ? err.message : String(err),
+        tone: 'error',
+      });
     } finally {
       setBusy(false);
     }
   }
 
   function handlePlay(id: string) {
-    setPlayingId(id === playingId ? null : id);
-    invoke('play_audio_item', { id }).catch(console.error);
+    const nextPlayingId = id === playingId ? null : id;
+    setPlayingId(nextPlayingId);
+
+    const target = audioFiles.find(file => file.id === id)?.filePath;
+    if (!target) {
+      logger.warn('audio', '未找到可播放的音频路径', { id });
+      return;
+    }
+
+    invoke('open_path', { path: target }).catch(err => {
+      logger.error('audio', '打开音频路径失败', err);
+    });
   }
 
   return (

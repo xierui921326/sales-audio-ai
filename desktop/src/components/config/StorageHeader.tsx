@@ -8,6 +8,7 @@ interface StorageHeaderProps {
 }
 
 export default function StorageHeader({ config, setConfig }: StorageHeaderProps) {
+  // 音频目录由音频页统一维护，生成与导出链路都直接读取这里的配置。
   async function pickPath() {
     const path = await invoke<string>('pick_path', { kind: 'directory' });
     if (path) {

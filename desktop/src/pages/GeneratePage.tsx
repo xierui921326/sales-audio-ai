@@ -1,6 +1,7 @@
 import React from 'react';
 import ConfigSelect from '../components/config/ConfigSelect';
 import TranscriptPanel from '../components/TranscriptPanel';
+import { logger } from '../utils/logger';
 import { AppConfig, GenerateConversationInput, RecordingState, TranscriptSegment } from '../types';
 
 interface GeneratePageProps {
@@ -88,7 +89,9 @@ export default function GeneratePage({
       scenario: form.scenario.trim(),
       supplementalPrompt: form.supplementalPrompt?.trim() ?? '',
       llmEndpointId: selectedLlmId,
-    }).catch(console.error);
+    }).catch(err => {
+      logger.error('generate-page', '触发生成请求失败', err);
+    });
   }
 
   return (

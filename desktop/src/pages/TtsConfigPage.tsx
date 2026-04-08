@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import ConfigPlaceholder from '../components/config/ConfigPlaceholder';
 import ConfigSelect from '../components/config/ConfigSelect';
+import { logger } from '../utils/logger';
 import { AppConfig, TtsEndpointConfig } from '../types';
 
 const EDGE_TTS_VOICE_OPTIONS = [
@@ -26,6 +27,7 @@ interface TtsConfigPageProps {
 }
 
 export default function TtsConfigPage({ config, setConfig, savedConfigSnapshot, onSaveConfig, configSaveState, hasUnsavedChanges }: TtsConfigPageProps) {
+  // 这里维护的是全局默认 TTS，生成页不会再单独选择 TTS。
   const [selectedEndpointId, setSelectedEndpointId] = useState(config.activeTtsId || config.ttsEndpoints[0]?.id || '');
   const activeEndpoint = config.ttsEndpoints.find((e) => e.id === selectedEndpointId);
   const defaultEndpointId = config.activeTtsId;
@@ -94,7 +96,7 @@ export default function TtsConfigPage({ config, setConfig, savedConfigSnapshot, 
         });
       }
     } catch (error) {
-      console.error(error);
+      logger.error('tts-config', '获取音色列表失败', error);
     } finally {
       setLoadingVoices(false);
     }
