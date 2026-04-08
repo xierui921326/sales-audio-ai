@@ -87,6 +87,12 @@
   width: 100%;
 }
 
+.generate-audio-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .generate-form-hint {
   padding: 10px 12px;
   font-size: 12px;

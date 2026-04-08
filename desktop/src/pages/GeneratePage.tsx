@@ -65,8 +65,10 @@ export default function GeneratePage({
   }, [config.llmEndpoints, defaultLlmId]);
 
   const selectedLlm = config.llmEndpoints.find(endpoint => endpoint.id === selectedLlmId);
+  const defaultTts = config.ttsEndpoints.find(endpoint => endpoint.id === config.activeTtsId) ?? config.ttsEndpoints[0];
   const hasScenario = form.scenario.trim().length > 0;
   const canGenerate = Boolean(selectedLlm?.apiKey && selectedLlm?.baseUrl && selectedLlm?.model && hasScenario);
+  const hasValidDefaultTts = Boolean(defaultTts?.salesVoice?.trim() && defaultTts?.customerVoice?.trim() && (defaultTts.provider === 'edge' || defaultTts.baseUrl?.trim()));
   const recordingState: RecordingState = busy ? 'processing' : transcript.length > 0 ? 'done' : 'idle';
 
   function updateForm<Key extends keyof GenerateConversationInput>(key: Key, value: GenerateConversationInput[Key]) {
@@ -163,9 +165,16 @@ export default function GeneratePage({
                 </button>
 
                 {transcript.length > 0 ? (
-                  <button className="success-button generate-form-submit" onClick={onGenerateAudio} disabled={busy} type="button">
-                    同步合成本地音频
-                  </button>
+                  <div className="generate-audio-actions">
+                    <div className="generate-form-hint">
+                      {hasValidDefaultTts && defaultTts
+                        ? `当前音频合成将使用默认 TTS：${defaultTts.title || defaultTts.ttsModel || '未命名 TTS'}。如需切换，请前往 TTS 配置页修改默认配置。`
+                        : '当前默认 TTS 不可用，请先到 TTS 配置页补全并保存默认配置。'}
+                    </div>
+                    <button className="success-button generate-form-submit" onClick={onGenerateAudio} disabled={busy} type="button">
+                      同步合成本地音频
+                    </button>
+                  </div>
                 ) : null}
               </div>
             </div>

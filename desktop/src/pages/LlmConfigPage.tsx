@@ -17,14 +17,18 @@ const LLM_PRESETS = [
 interface LlmConfigPageProps {
   config: AppConfig;
   setConfig: React.Dispatch<React.SetStateAction<AppConfig>>;
+  savedConfigSnapshot: AppConfig;
   onSaveConfig: () => Promise<void>;
   configSaveState: 'idle' | 'saving' | 'success' | 'error';
   hasUnsavedChanges: boolean;
-  supplierLocked: boolean;
 }
 
-export default function LlmConfigPage({ config, setConfig, onSaveConfig, configSaveState, hasUnsavedChanges, supplierLocked }: LlmConfigPageProps) {
-  const activeEndpoint = config.llmEndpoints.find((e) => e.id === config.activeLlmId);
+export default function LlmConfigPage({ config, setConfig, savedConfigSnapshot, onSaveConfig, configSaveState, hasUnsavedChanges }: LlmConfigPageProps) {
+  const [selectedEndpointId, setSelectedEndpointId] = useState(config.activeLlmId || config.llmEndpoints[0]?.id || '');
+  const activeEndpoint = config.llmEndpoints.find((e) => e.id === selectedEndpointId);
+  const defaultEndpointId = config.activeLlmId;
+  const savedDefaultEndpointId = savedConfigSnapshot.activeLlmId;
+  const supplierLocked = savedConfigSnapshot.llmEndpoints.some(e => e.id === selectedEndpointId);
   const [loadingModels, setLoadingModels] = useState(false);
   const [modelOptionsByEndpoint, setModelOptionsByEndpoint] = useState<Record<string, string[]>>({});
   const [modelFetchDialog, setModelFetchDialog] = useState<{
@@ -33,6 +37,18 @@ export default function LlmConfigPage({ config, setConfig, onSaveConfig, configS
     text: string;
     mode: 'loading' | 'result';
   } | null>(null);
+
+  useEffect(() => {
+    setSelectedEndpointId(current => {
+      if (current && config.llmEndpoints.some(endpoint => endpoint.id === current)) {
+        return current;
+      }
+      if (config.activeLlmId && config.llmEndpoints.some(endpoint => endpoint.id === config.activeLlmId)) {
+        return config.activeLlmId;
+      }
+      return config.llmEndpoints[0]?.id ?? '';
+    });
+  }, [config.activeLlmId, config.llmEndpoints]);
 
   const currentPreset =
     activeEndpoint &&
@@ -88,7 +104,11 @@ export default function LlmConfigPage({ config, setConfig, onSaveConfig, configS
     });
 
     try {
-      const options = await invoke<Array<{ label: string; value: string; badge?: string }>>('list_llm_models', { config });
+      const requestConfig = {
+        ...config,
+        activeLlmId: activeEndpoint.id,
+      };
+      const options = await invoke<Array<{ label: string; value: string; badge?: string }>>('list_llm_models', { config: requestConfig });
       const list = Array.isArray(options) ? options.map(o => o?.value || o?.label).filter(Boolean) : [];
       const uniq = Array.from(new Set(list));
 
@@ -132,8 +152,8 @@ export default function LlmConfigPage({ config, setConfig, onSaveConfig, configS
     }
   }
 
-  function setActiveLlmId(id: string) {
-    setConfig((prev) => ({ ...prev, activeLlmId: id }));
+  function setDefaultLlmId(id: string) {
+    setConfig(prev => ({ ...prev, activeLlmId: id }));
   }
 
   function updateEndpoint(id: string, partial: Partial<LlmEndpointConfig>) {
@@ -165,8 +185,8 @@ export default function LlmConfigPage({ config, setConfig, onSaveConfig, configS
     setConfig((prev) => ({
       ...prev,
       llmEndpoints: [...prev.llmEndpoints, newEp],
-      activeLlmId: newId,
     }));
+    setSelectedEndpointId(newId);
   }
 
   function deleteEndpoint(id: string) {
@@ -177,6 +197,17 @@ export default function LlmConfigPage({ config, setConfig, onSaveConfig, configS
         llmEndpoints: next,
         activeLlmId: prev.activeLlmId === id ? (next.length > 0 ? next[0].id : '') : prev.activeLlmId,
       };
+    });
+
+    setSelectedEndpointId(current => {
+      if (current !== id) {
+        return current;
+      }
+      const next = config.llmEndpoints.filter((e) => e.id !== id);
+      if (config.activeLlmId && config.activeLlmId !== id && next.some(endpoint => endpoint.id === config.activeLlmId)) {
+        return config.activeLlmId;
+      }
+      return next[0]?.id ?? '';
     });
   }
 
@@ -192,10 +223,13 @@ export default function LlmConfigPage({ config, setConfig, onSaveConfig, configS
           {config.llmEndpoints.map((ep) => (
             <div
               key={ep.id}
-              className={`sub-nav-item ${config.activeLlmId === ep.id ? 'is-active' : ''}`}
-              onClick={() => setActiveLlmId(ep.id)}
+              className={`sub-nav-item ${selectedEndpointId === ep.id ? 'is-active' : ''}`}
+              onClick={() => setSelectedEndpointId(ep.id)}
             >
-              <span>{ep.title}</span>
+              <div className="sub-nav-item__content">
+                <span>{ep.title}</span>
+                {defaultEndpointId === ep.id ? <span className="sub-nav-item__badge">默认</span> : null}
+              </div>
               <button className="del-btn" type="button" onClick={(e) => { e.stopPropagation(); deleteEndpoint(ep.id); }}>
                 <span className="icon-shape icon-shape--close" aria-hidden="true" />
               </button>
@@ -210,6 +244,24 @@ export default function LlmConfigPage({ config, setConfig, onSaveConfig, configS
         ) : (
           <div className="config-page-card animate-fade-in">
             <div className="config-form-wrapper">
+              <div className="config-default-banner">
+                <div className="config-default-banner__title">默认 LLM 配置</div>
+                <div className="config-default-banner__text">
+                  生成页可以临时切换本次使用的 LLM，但不会自动改掉这里的默认值。
+                </div>
+                <button
+                  className={`chip-button ${defaultEndpointId === activeEndpoint.id ? 'is-active' : 'strong-secondary'}`}
+                  onClick={() => setDefaultLlmId(activeEndpoint.id)}
+                  disabled={defaultEndpointId === activeEndpoint.id}
+                  type="button"
+                >
+                  {defaultEndpointId === activeEndpoint.id ? '当前默认 LLM' : '设为默认 LLM'}
+                </button>
+                {savedDefaultEndpointId !== defaultEndpointId ? (
+                  <div className="field-helper-text">默认 LLM 已变更，记得点击下方“保存配置”生效。</div>
+                ) : null}
+              </div>
+
               <div className="config-section-header">
                 <div className="field-block config-section-header__field-block">
                   <label>预设供应商</label>

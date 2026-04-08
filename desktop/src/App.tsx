@@ -128,9 +128,6 @@ export default function App() {
     invoke('play_audio_item', { id }).catch(console.error);
   }
 
-  const llmSupplierLocked = savedConfigSnapshot.llmEndpoints.some(e => e.id === config.activeLlmId);
-  const ttsSupplierLocked = savedConfigSnapshot.ttsEndpoints.some(e => e.id === config.activeTtsId);
-
   return (
     <>
       <div className="app-shell">
@@ -141,6 +138,7 @@ export default function App() {
               activeNav={activeNav}
               config={config}
               setConfig={setConfig}
+              savedConfigSnapshot={savedConfigSnapshot}
               transcript={transcript}
               audioFiles={audioFiles}
               playingId={playingId}
@@ -150,8 +148,6 @@ export default function App() {
               onSaveConfig={handleSaveConfig}
               configSaveState={configSaveState}
               hasUnsavedChanges={hasUnsavedChanges}
-              llmSupplierLocked={llmSupplierLocked}
-              ttsSupplierLocked={ttsSupplierLocked}
               busy={busy}
             />
           </main>
@@ -182,6 +178,7 @@ interface MainContentProps {
   activeNav: NavigationItemId;
   config: AppConfig;
   setConfig: React.Dispatch<React.SetStateAction<AppConfig>>;
+  savedConfigSnapshot: AppConfig;
   transcript: TranscriptSegment[];
   audioFiles: AudioFileItem[];
   playingId: string | null;
@@ -191,12 +188,10 @@ interface MainContentProps {
   onSaveConfig: () => Promise<void>;
   configSaveState: 'idle' | 'saving' | 'success' | 'error';
   hasUnsavedChanges: boolean;
-  llmSupplierLocked: boolean;
-  ttsSupplierLocked: boolean;
   busy: boolean;
 }
 
-function MainContent({ activeNav, config, setConfig, transcript, audioFiles, playingId, onPlay, onGenerateConv, onGenerateAudio, onSaveConfig, configSaveState, hasUnsavedChanges, llmSupplierLocked, ttsSupplierLocked, busy }: MainContentProps) {
+function MainContent({ activeNav, config, setConfig, savedConfigSnapshot, transcript, audioFiles, playingId, onPlay, onGenerateConv, onGenerateAudio, onSaveConfig, configSaveState, hasUnsavedChanges, busy }: MainContentProps) {
   switch (activeNav) {
     case 'generate':
       return <GeneratePage config={config} transcript={transcript} onGenerate={onGenerateConv} onGenerateAudio={onGenerateAudio} busy={busy} />;
@@ -208,9 +203,9 @@ function MainContent({ activeNav, config, setConfig, transcript, audioFiles, pla
         </div>
       );
     case 'llm':
-      return <LlmConfigPage config={config} setConfig={setConfig} onSaveConfig={onSaveConfig} configSaveState={configSaveState} hasUnsavedChanges={hasUnsavedChanges} supplierLocked={llmSupplierLocked} />;
+      return <LlmConfigPage config={config} setConfig={setConfig} savedConfigSnapshot={savedConfigSnapshot} onSaveConfig={onSaveConfig} configSaveState={configSaveState} hasUnsavedChanges={hasUnsavedChanges} />;
     case 'tts':
-      return <TtsConfigPage config={config} setConfig={setConfig} onSaveConfig={onSaveConfig} configSaveState={configSaveState} hasUnsavedChanges={hasUnsavedChanges} supplierLocked={ttsSupplierLocked} />;
+      return <TtsConfigPage config={config} setConfig={setConfig} savedConfigSnapshot={savedConfigSnapshot} onSaveConfig={onSaveConfig} configSaveState={configSaveState} hasUnsavedChanges={hasUnsavedChanges} />;
     default:
       return <div className="empty-page-message">模块开发中...</div>;
   }

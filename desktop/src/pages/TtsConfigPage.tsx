@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import ConfigPlaceholder from '../components/config/ConfigPlaceholder';
 import ConfigSelect from '../components/config/ConfigSelect';
@@ -19,14 +19,18 @@ const TTS_PRESETS = [
 interface TtsConfigPageProps {
   config: AppConfig;
   setConfig: React.Dispatch<React.SetStateAction<AppConfig>>;
+  savedConfigSnapshot: AppConfig;
   onSaveConfig: () => Promise<void>;
   configSaveState: 'idle' | 'saving' | 'success' | 'error';
   hasUnsavedChanges: boolean;
-  supplierLocked: boolean;
 }
 
-export default function TtsConfigPage({ config, setConfig, onSaveConfig, configSaveState, hasUnsavedChanges, supplierLocked }: TtsConfigPageProps) {
-  const activeEndpoint = config.ttsEndpoints.find((e) => e.id === config.activeTtsId);
+export default function TtsConfigPage({ config, setConfig, savedConfigSnapshot, onSaveConfig, configSaveState, hasUnsavedChanges }: TtsConfigPageProps) {
+  const [selectedEndpointId, setSelectedEndpointId] = useState(config.activeTtsId || config.ttsEndpoints[0]?.id || '');
+  const activeEndpoint = config.ttsEndpoints.find((e) => e.id === selectedEndpointId);
+  const defaultEndpointId = config.activeTtsId;
+  const savedDefaultEndpointId = savedConfigSnapshot.activeTtsId;
+  const supplierLocked = savedConfigSnapshot.ttsEndpoints.some(e => e.id === selectedEndpointId);
   const [loadingVoices, setLoadingVoices] = useState(false);
   const [voiceOptionsByEndpoint, setVoiceOptionsByEndpoint] = useState<Record<string, string[]>>({});
   const [saveDialog, setSaveDialog] = useState<{
@@ -51,6 +55,18 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
     }));
   }, [activeEndpoint, voiceOptionsByEndpoint]);
 
+  useEffect(() => {
+    setSelectedEndpointId(current => {
+      if (current && config.ttsEndpoints.some(endpoint => endpoint.id === current)) {
+        return current;
+      }
+      if (config.activeTtsId && config.ttsEndpoints.some(endpoint => endpoint.id === config.activeTtsId)) {
+        return config.activeTtsId;
+      }
+      return config.ttsEndpoints[0]?.id ?? '';
+    });
+  }, [config.activeTtsId, config.ttsEndpoints]);
+
   async function fetchVoices() {
     if (!activeEndpoint || !isQwenPreset) {
       return;
@@ -58,7 +74,11 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
 
     setLoadingVoices(true);
     try {
-      const options = await invoke<Array<{ label: string; value: string }>>('list_tts_voices', { config });
+      const requestConfig = {
+        ...config,
+        activeTtsId: activeEndpoint.id,
+      };
+      const options = await invoke<Array<{ label: string; value: string }>>('list_tts_voices', { config: requestConfig });
       const voices = Array.isArray(options) ? options.map(option => option?.value || option?.label).filter(Boolean) : [];
       const uniq = Array.from(new Set(voices));
 
@@ -129,8 +149,8 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
     await onSaveConfig();
   }
 
-  function setActiveTtsId(id: string) {
-    setConfig((prev) => ({ ...prev, activeTtsId: id }));
+  function setDefaultTtsId(id: string) {
+    setConfig(prev => ({ ...prev, activeTtsId: id }));
     setSaveDialog(null);
   }
 
@@ -157,8 +177,8 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
     setConfig((prev) => ({
       ...prev,
       ttsEndpoints: [...prev.ttsEndpoints, newEp],
-      activeTtsId: newId,
     }));
+    setSelectedEndpointId(newId);
     setSaveDialog(null);
   }
 
@@ -170,6 +190,17 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
         ttsEndpoints: next,
         activeTtsId: prev.activeTtsId === id ? (next.length > 0 ? next[0].id : '') : prev.activeTtsId,
       };
+    });
+
+    setSelectedEndpointId(current => {
+      if (current !== id) {
+        return current;
+      }
+      const next = config.ttsEndpoints.filter((e) => e.id !== id);
+      if (config.activeTtsId && config.activeTtsId !== id && next.some(endpoint => endpoint.id === config.activeTtsId)) {
+        return config.activeTtsId;
+      }
+      return next[0]?.id ?? '';
     });
     setSaveDialog(null);
   }
@@ -196,10 +227,13 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
           {config.ttsEndpoints.map((ep) => (
             <div
               key={ep.id}
-              className={`sub-nav-item ${config.activeTtsId === ep.id ? 'is-active' : ''}`}
-              onClick={() => setActiveTtsId(ep.id)}
+              className={`sub-nav-item ${selectedEndpointId === ep.id ? 'is-active' : ''}`}
+              onClick={() => setSelectedEndpointId(ep.id)}
             >
-              <span>{ep.title}</span>
+              <div className="sub-nav-item__content">
+                <span>{ep.title}</span>
+                {defaultEndpointId === ep.id ? <span className="sub-nav-item__badge">默认</span> : null}
+              </div>
               <button className="del-btn" type="button" onClick={(e) => { e.stopPropagation(); deleteEndpoint(ep.id); }}>
                 <span className="icon-shape icon-shape--close" aria-hidden="true" />
               </button>
@@ -214,6 +248,24 @@ export default function TtsConfigPage({ config, setConfig, onSaveConfig, configS
         ) : (
           <div className="config-page-card animate-fade-in">
             <div className="config-form-wrapper">
+              <div className="config-default-banner">
+                <div className="config-default-banner__title">默认 TTS 配置</div>
+                <div className="config-default-banner__text">
+                  生成页不会单独选择 TTS，音频合成始终使用这里设置的默认配置。
+                </div>
+                <button
+                  className={`chip-button ${defaultEndpointId === activeEndpoint.id ? 'is-active' : 'strong-secondary'}`}
+                  onClick={() => setDefaultTtsId(activeEndpoint.id)}
+                  disabled={defaultEndpointId === activeEndpoint.id}
+                  type="button"
+                >
+                  {defaultEndpointId === activeEndpoint.id ? '当前默认 TTS' : '设为默认 TTS'}
+                </button>
+                {savedDefaultEndpointId !== defaultEndpointId ? (
+                  <div className="field-helper-text">默认 TTS 已变更，记得点击下方“保存配置”生效。</div>
+                ) : null}
+              </div>
+
               <div className="config-section-header">
                 <div className="field-block config-section-header__field-block">
                   <label>预设服务商</label>

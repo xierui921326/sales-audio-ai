@@ -81,13 +81,54 @@
   border-color: rgba(47, 128, 255, 0.16);
 }
 
-.sub-nav-item > span {
+.sub-nav-item__content {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sub-nav-item__content > span {
   min-width: 0;
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.sub-nav-item__badge {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--blue-dark);
+  background: var(--blue-soft);
+  border: 1px solid rgba(47, 128, 255, 0.14);
+  border-radius: 999px;
+}
+
+.config-default-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 14px;
+  background: linear-gradient(180deg, #fff, #fbfdff);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.config-default-banner__title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.config-default-banner__text {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
 }
 
 .del-btn {

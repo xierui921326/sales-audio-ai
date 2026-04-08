@@ -226,6 +226,25 @@ struct OpenAiMessage {
     content: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum OpenAiMessageContent {
+    Text(String),
+    Parts(Vec<OpenAiContentPart>),
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiContentPart {
+    #[serde(rename = "type")]
+    part_type: Option<String>,
+    text: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiResponseMessage {
+    content: OpenAiMessageContent,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OpenAiRequest {
@@ -241,7 +260,7 @@ struct OpenAiResponse {
 
 #[derive(Debug, Deserialize)]
 struct OpenAiChoice {
-    message: OpenAiMessage,
+    message: OpenAiResponseMessage,
 }
 
 #[derive(Debug, Serialize)]
@@ -765,6 +784,17 @@ fn extract_json_block(content: &str) -> Option<String> {
     Some(fenced[start..=end].to_string())
 }
 
+fn normalize_openai_message_content(content: OpenAiMessageContent) -> String {
+    match content {
+        OpenAiMessageContent::Text(text) => text,
+        OpenAiMessageContent::Parts(parts) => parts
+            .into_iter()
+            .filter(|part| part.part_type.as_deref().unwrap_or("text") == "text")
+            .filter_map(|part| part.text)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
+}
 
 async fn call_remote_llm(config: &AppConfig, input: &GenerateConversationInput) -> Result<GenerateConversationOutput, String> {
     let requested_endpoint_id = input.llm_endpoint_id.as_deref().map(str::trim).filter(|id| !id.is_empty());
@@ -869,11 +899,13 @@ async fn call_remote_llm(config: &AppConfig, input: &GenerateConversationInput) 
     let payload: OpenAiResponse = response
         .json()
         .await
-        .map_err(|e| format!("解析远程模型响应失败: {e}"))?;
+        .map_err(|e| format!("解析远程模型响应失败: {e}。请检查当前 LLM 接口是否兼容 OpenAI Chat Completions 返回格式。"))?;
     let content = payload
         .choices
-        .first()
-        .map(|choice| choice.message.content.clone())
+        .into_iter()
+        .next()
+        .map(|choice| normalize_openai_message_content(choice.message.content))
+        .filter(|content| !content.trim().is_empty())
         .ok_or_else(|| "远程模型未返回内容".to_string())?;
 
     let json_block = extract_json_block(&content).unwrap_or(content);
