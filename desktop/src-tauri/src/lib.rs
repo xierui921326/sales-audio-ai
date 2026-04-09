@@ -96,8 +96,6 @@ struct AppConfig {
     #[serde(default)]
     tts_endpoints: Vec<TtsEndpointConfig>,
 
-    #[serde(default = "default_fallback_model")]
-    fallback_model: String,
     #[serde(default)]
     audio_dir: String,
     #[serde(default)]
@@ -269,6 +267,22 @@ struct OpenAiResponse {
 #[derive(Debug, Deserialize)]
 struct OpenAiChoice {
     message: OpenAiResponseMessage,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiResponse {
+    candidates: Vec<GeminiCandidate>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiCandidate {
+    content: Option<GeminiContent>,
+    output: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiContent {
+    parts: Vec<OpenAiContentPart>,
 }
 
 #[derive(Debug, Serialize)]
@@ -626,7 +640,72 @@ fn open_workspace_db(app: &AppHandle) -> Result<Connection, String> {
         [],
     )
     .map_err(|e| format!("初始化应用数据库失败: {e}"))?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS audio_records (
+            id TEXT PRIMARY KEY,
+            batch_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            title TEXT NOT NULL,
+            file_name TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            duration TEXT NOT NULL DEFAULT '',
+            text TEXT,
+            created_at TEXT NOT NULL
+        )",
+        [],
+    )
+    .map_err(|e| format!("初始化音频记录表失败: {e}"))?;
     Ok(conn)
+}
+
+fn persist_audio_record(app: &AppHandle, batch_id: &str, audio: &AudioFileItem) -> Result<(), String> {
+    let conn = open_workspace_db(app)?;
+    conn.execute(
+        "INSERT INTO audio_records(
+            id, batch_id, role, title, file_name, file_path, duration, text, created_at
+        ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            audio.id,
+            batch_id,
+            audio.role,
+            audio.title,
+            audio.file_name,
+            audio.file_path.clone().unwrap_or_default(),
+            audio.duration,
+            audio.text,
+            now_text(),
+        ],
+    )
+    .map_err(|e| format!("写入音频记录失败: {e}"))?;
+    Ok(())
+}
+
+fn load_audio_records(app: &AppHandle) -> Result<Vec<AudioFileItem>, String> {
+    let conn = open_workspace_db(app)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, role, title, file_name, file_path, duration, text
+             FROM audio_records
+             ORDER BY created_at DESC, rowid DESC",
+        )
+        .map_err(|e| format!("查询音频记录失败: {e}"))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(AudioFileItem {
+                id: row.get(0)?,
+                role: row.get(1)?,
+                title: row.get(2)?,
+                file_name: row.get(3)?,
+                file_path: Some(row.get::<_, String>(4)?),
+                duration: row.get(5)?,
+                text: row.get(6)?,
+            })
+        })
+        .map_err(|e| format!("读取音频记录失败: {e}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("解析音频记录失败: {e}"))
 }
 
 fn load_workspace_from_db(app: &AppHandle) -> Result<Option<WorkspaceData>, String> {
@@ -672,8 +751,8 @@ fn now_text() -> String {
     Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
-fn default_fallback_model() -> String {
-    "deepseek-chat".into()
+fn unique_batch_id() -> String {
+    format!("{}", Local::now().format("%Y%m%d%H%M%S%3f"))
 }
 
 fn ensure_output_dir(data_dir: &Path, requested_audio_dir: &str) -> Result<PathBuf, String> {
@@ -702,6 +781,11 @@ fn merged_audio_title() -> String {
     "合并音频".into()
 }
 
+#[tauri::command]
+fn list_audio_files(app: AppHandle) -> Result<Vec<AudioFileItem>, String> {
+    load_audio_records(&app)
+}
+
 fn default_config(app: &AppHandle) -> Result<AppConfig, String> {
     Ok(AppConfig {
         active_llm_id: "default-llm".into(),
@@ -724,7 +808,6 @@ fn default_config(app: &AppHandle) -> Result<AppConfig, String> {
             sales_voice: "zh-CN-YunxiNeural".into(),
             customer_voice: "zh-CN-XiaoxiaoNeural".into(),
         }],
-        fallback_model: default_fallback_model(),
         audio_dir: default_audio_dir(app)?,
         database_path: resolved_database_path(app)?,
         config_file: resolved_config_file(),
@@ -915,6 +998,58 @@ fn normalize_openai_message_content(content: OpenAiMessageContent) -> String {
     }
 }
 
+fn try_extract_openai_response_content(text: &str) -> Result<Option<String>, serde_json::Error> {
+    let payload: OpenAiResponse = serde_json::from_str(text)?;
+    Ok(payload
+        .choices
+        .into_iter()
+        .next()
+        .map(|choice| normalize_openai_message_content(choice.message.content))
+        .filter(|value| !value.trim().is_empty()))
+}
+
+fn try_extract_gemini_response_content(text: &str) -> Result<Option<String>, serde_json::Error> {
+    let payload: GeminiResponse = serde_json::from_str(text)?;
+    Ok(payload
+        .candidates
+        .into_iter()
+        .find_map(|candidate| {
+            candidate
+                .content
+                .map(|content| {
+                    content
+                        .parts
+                        .into_iter()
+                        .filter(|part| part.part_type.as_deref().unwrap_or("text") == "text")
+                        .filter_map(|part| part.text)
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| candidate.output.filter(|value| !value.trim().is_empty()))
+        }))
+}
+
+fn extract_llm_response_content(text: &str) -> Result<String, String> {
+    match try_extract_openai_response_content(text) {
+        Ok(Some(content)) => return Ok(content),
+        Ok(None) => {}
+        Err(_) => {}
+    }
+
+    match try_extract_gemini_response_content(text) {
+        Ok(Some(content)) => return Ok(content),
+        Ok(None) => {}
+        Err(_) => {}
+    }
+
+    let snippet = text.chars().take(240).collect::<String>();
+    Err(format!(
+        "解析远程模型响应失败：当前返回格式既不是 OpenAI Chat Completions，也不是 Gemini candidates。返回内容片段：{}",
+        snippet
+    ))
+}
+
 fn normalize_llm_speaker(value: &str) -> String {
     match value.trim().to_ascii_lowercase().as_str() {
         "assistant" | "sales" | "seller" | "agent" => "sales".into(),
@@ -1080,17 +1215,11 @@ async fn call_remote_llm(config: &AppConfig, input: &GenerateConversationInput) 
         return Err(format!("远程模型返回失败: {}", text));
     }
 
-    let payload: OpenAiResponse = response
-        .json()
+    let response_text = response
+        .text()
         .await
-        .map_err(|e| format!("解析远程模型响应失败: {e}。请检查当前 LLM 接口是否兼容 OpenAI Chat Completions 返回格式。"))?;
-    let content = payload
-        .choices
-        .into_iter()
-        .next()
-        .map(|choice| normalize_openai_message_content(choice.message.content))
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "远程模型未返回内容".to_string())?;
+        .map_err(|e| format!("读取远程模型响应失败: {e}"))?;
+    let content = extract_llm_response_content(&response_text)?;
 
     println!(
         "[sales-audio-ai][llm] 收到模型原始内容 endpoint={} preview={}",
@@ -1323,7 +1452,9 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
     let workspace = ensure_workspace(&app)?;
     let config = workspace.config;
     let data_dir = app_data_dir(&app)?;
-    let output_dir = ensure_output_dir(&data_dir, &input.audio_dir)?;
+    let root_output_dir = ensure_output_dir(&data_dir, &input.audio_dir)?;
+    let batch_id = unique_batch_id();
+    let output_dir = root_output_dir.join(&batch_id);
     fs::create_dir_all(&output_dir).map_err(|e| format!("创建输出目录失败: {e}"))?;
 
     let mut merged_chunks: Vec<Vec<u8>> = Vec::new();
@@ -1342,13 +1473,17 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
     for (index, segment) in input.transcript.iter().enumerate() {
         match synthesize_audio_bytes(&config, &segment.speaker, &segment.text).await {
             Ok(bytes) => {
+                let segment_name = format!("task_{:02}_{}.{}", index + 1, segment.speaker, segment_extension);
+                let segment_path = output_dir.join(&segment_name);
+                fs::write(&segment_path, &bytes).map_err(|e| format!("写入音频片段失败: {e}"))?;
                 merged_chunks.push(bytes);
                 used_real_tts = true;
                 println!(
-                    "[sales-audio-ai][audio] 音频片段合成成功 index={} provider={} ext={}",
+                    "[sales-audio-ai][audio] 音频片段合成成功 index={} provider={} ext={} path={}",
                     index + 1,
                     tts_config.provider,
-                    segment_extension
+                    segment_extension,
+                    segment_path.to_string_lossy()
                 );
             }
             Err(error) => {
@@ -1366,7 +1501,7 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
         return Err("未生成任何可用音频片段，请检查当前 TTS 配置后重试。".into());
     }
 
-    let merged_name = "merged_task.wav".to_string();
+    let merged_name = format!("merged_{}.wav", batch_id);
     let merged_path = output_dir.join(&merged_name);
     let merged_text = input
         .transcript
@@ -1384,7 +1519,7 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
     );
 
     let merged_file = AudioFileItem {
-        id: format!("audio-merged-{}", Local::now().timestamp()),
+        id: format!("audio-merged-{}", batch_id),
         role: "merged".into(),
         title: merged_audio_title(),
         file_name: merged_name,
@@ -1392,6 +1527,8 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
         file_path: Some(merged_path.to_string_lossy().to_string()),
         text: Some(merged_text),
     };
+
+    persist_audio_record(&app, &batch_id, &merged_file)?;
 
     Ok(GenerateAudioOutput {
         audio_files: vec![merged_file.clone()],
@@ -1502,6 +1639,7 @@ pub fn run() {
             save_tasks,
             list_llm_models,
             list_tts_voices,
+            list_audio_files,
             generate_conversation,
             generate_audio,
             export_zip,
@@ -1511,6 +1649,7 @@ pub fn run() {
         ])
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -20,7 +20,10 @@ export default function AudioPage({ audioFiles, playingId, onPlay, busy }: Audio
                 </button>
                 <div className="audio-row-item__content">
                   <div className="audio-row-item__title">{file.title}</div>
-                  <div className="audio-row-item__meta">{file.fileName}</div>
+                  <div className="audio-row-item__meta-row">
+                    <span className="audio-row-item__meta-label">文件名</span>
+                    <span className="audio-row-item__meta audio-row-item__file-name">{file.fileName}</span>
+                  </div>
                 </div>
                 <div className="audio-row-item__duration">{file.duration}</div>
               </div>

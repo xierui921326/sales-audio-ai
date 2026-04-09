@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { convertFileSrc } from '@tauri-apps/api/core';
+import { readFile } from '@tauri-apps/plugin-fs';
 import Sidebar from './components/layout/Sidebar';
 import StorageHeader from './components/config/StorageHeader';
 import GeneratePage from './pages/GeneratePage';
@@ -54,22 +54,42 @@ export default function App() {
   const [savedConfigSnapshot, setSavedConfigSnapshot] = useState<AppConfig>(DEFAULT_CONFIG);
   const [generateDialog, setGenerateDialog] = useState<GenerateDialogState>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioObjectUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     const audio = new Audio();
     audioRef.current = audio;
 
+    const revokeAudioObjectUrl = () => {
+      if (audioObjectUrlRef.current) {
+        URL.revokeObjectURL(audioObjectUrlRef.current);
+        audioObjectUrlRef.current = null;
+      }
+    };
+
     const handleEnded = () => {
       setPlayingId(null);
+      revokeAudioObjectUrl();
     };
 
     audio.addEventListener('ended', handleEnded);
     return () => {
       audio.pause();
       audio.removeEventListener('ended', handleEnded);
+      revokeAudioObjectUrl();
       audioRef.current = null;
     };
   }, []);
+
+  async function reloadAudioFiles() {
+    try {
+      const records = await invoke<AudioFileItem[]>('list_audio_files');
+      setAudioFiles(records);
+      logger.info('audio', '音频历史加载完成', { fileCount: records.length });
+    } catch (err) {
+      logger.error('audio', '加载音频历史失败', err);
+    }
+  }
 
   // 应用启动时先读取本地工作区配置，后续所有页面都基于这份配置工作。
   useEffect(() => {
@@ -79,6 +99,7 @@ export default function App() {
         const workspace = await invoke<WorkspaceData>('load_workspace');
         setConfig(workspace.config);
         setSavedConfigSnapshot(workspace.config);
+        await reloadAudioFiles();
         logger.info('app', '工作区加载完成', {
           llmCount: workspace.config.llmEndpoints.length,
           ttsCount: workspace.config.ttsEndpoints.length,
@@ -157,7 +178,7 @@ export default function App() {
           audioDir: config.audioDir,
         },
       });
-      setAudioFiles([result.mergedFile]);
+      await reloadAudioFiles();
       setPlayingId(null);
       if (audioRef.current) {
         audioRef.current.pause();
@@ -187,22 +208,43 @@ export default function App() {
       return;
     }
 
+    const revokeAudioObjectUrl = () => {
+      if (audioObjectUrlRef.current) {
+        URL.revokeObjectURL(audioObjectUrlRef.current);
+        audioObjectUrlRef.current = null;
+      }
+    };
+
     if (playingId === id) {
       player.pause();
       player.currentTime = 0;
+      player.removeAttribute('src');
+      player.load();
+      revokeAudioObjectUrl();
       setPlayingId(null);
       return;
     }
 
     try {
-      const audioUrl = convertFileSrc(target);
+      const audioBytes = await readFile(target);
+      const ext = target.split('.').pop()?.toLowerCase();
+      const mimeType = ext === 'mp3' ? 'audio/mpeg' : 'audio/wav';
+      const audioBlob = new Blob([audioBytes], { type: mimeType });
+      const audioUrl = URL.createObjectURL(audioBlob);
+
       player.pause();
+      revokeAudioObjectUrl();
+      audioObjectUrlRef.current = audioUrl;
       player.src = audioUrl;
       player.currentTime = 0;
       await player.play();
       setPlayingId(id);
       logger.info('audio', '开始播放音频', { id, target });
     } catch (err) {
+      player.pause();
+      player.removeAttribute('src');
+      player.load();
+      revokeAudioObjectUrl();
       setPlayingId(null);
       logger.error('audio', '播放音频失败', err);
       setGenerateDialog({

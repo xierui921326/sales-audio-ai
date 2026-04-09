@@ -236,11 +236,13 @@ export default function TtsConfigPage({ config, setConfig, savedConfigSnapshot, 
             >
               <div className="sub-nav-item__content">
                 <span>{ep.title}</span>
-                {defaultEndpointId === ep.id ? <span className="sub-nav-item__badge">默认</span> : null}
               </div>
-              <button className="del-btn" type="button" onClick={(e) => { e.stopPropagation(); deleteEndpoint(ep.id); }}>
-                <span className="icon-shape icon-shape--close" aria-hidden="true" />
-              </button>
+              <div className="sub-nav-item__actions">
+                {defaultEndpointId === ep.id ? <span className="sub-nav-item__badge">默认</span> : null}
+                <button className="del-btn" type="button" onClick={(e) => { e.stopPropagation(); deleteEndpoint(ep.id); }}>
+                  <span className="icon-shape icon-shape--close" aria-hidden="true" />
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -252,27 +254,18 @@ export default function TtsConfigPage({ config, setConfig, savedConfigSnapshot, 
         ) : (
           <div className="config-page-card animate-fade-in">
             <div className="config-form-wrapper">
-              <div className="config-default-banner">
-                <div className="config-default-banner__title">默认 TTS 配置</div>
-                <div className="config-default-banner__text">
-                  生成页不会单独选择 TTS，音频合成始终使用这里设置的默认配置。
-                </div>
-                <button
-                  className={`chip-button ${defaultEndpointId === activeEndpoint.id ? 'is-active' : 'strong-secondary'}`}
-                  onClick={() => setDefaultTtsId(activeEndpoint.id)}
-                  disabled={defaultEndpointId === activeEndpoint.id}
-                  type="button"
-                >
-                  {defaultEndpointId === activeEndpoint.id ? '当前默认 TTS' : '设为默认 TTS'}
-                </button>
-                {savedDefaultEndpointId !== defaultEndpointId ? (
-                  <div className="field-helper-text">默认 TTS 已变更，记得点击下方“保存配置”生效。</div>
-                ) : null}
-              </div>
+              {savedDefaultEndpointId !== defaultEndpointId ? (
+                <div className="field-helper-text config-default-inline-tip">默认 TTS 已变更，记得点击下方“保存配置”生效。</div>
+              ) : null}
 
               <div className="config-section-header">
                 <div className="field-block config-section-header__field-block">
-                  <label>预设服务商</label>
+                  <div className="field-inline-header config-label-inline-row">
+                    <label>预设供应商</label>
+                    {supplierLocked ? (
+                      <span className="config-inline-warning">当前端点已保存，供应商不可更改；如需切换，请新增配置。</span>
+                    ) : null}
+                  </div>
                   <ConfigSelect
                     value={currentPreset?.label || 'Edge TTS (免费)'}
                     options={TTS_PRESETS.map(p => ({
@@ -297,14 +290,19 @@ export default function TtsConfigPage({ config, setConfig, savedConfigSnapshot, 
                     placeholder="请选择服务商"
                     disabled={supplierLocked}
                   />
-                  {supplierLocked ? (
-                    <div className="field-helper-text">当前端点已保存，供应商不可更改；如需切换，请新增配置。</div>
-                  ) : null}
                 </div>
               </div>
 
               <div className="config-form-stack">
                 <div className="group-card">
+                  {defaultEndpointId !== activeEndpoint.id ? (
+                    <div className="config-inline-action-bar config-inline-action-bar--inside-card">
+                      <div className="config-inline-action-bar__text">当前选中项还不是默认 TTS。</div>
+                      <button className="chip-button strong-secondary" onClick={() => setDefaultTtsId(activeEndpoint.id)} type="button">
+                        设为默认 TTS
+                      </button>
+                    </div>
+                  ) : null}
                   <div className="field-block">
                     <label>服务名称</label>
                     <input
