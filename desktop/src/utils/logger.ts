@@ -4,9 +4,29 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 const PREFIX = '[sales-audio-ai]';
 
+function resolveCallerLocation(): string | undefined {
+  const stack = new Error().stack;
+  if (!stack) {
+    return undefined;
+  }
+
+  const lines = stack.split('\n').map(line => line.trim());
+  const callerLine = lines.find(
+    line =>
+      line &&
+      !line.includes('resolveCallerLocation') &&
+      !line.includes('writeToLocalFile') &&
+      !line.includes('log (') &&
+      !line.includes('log@') &&
+      !line.includes('logger.ts')
+  );
+
+  return callerLine;
+}
+
 function print(level: LogLevel, scope: string, message: string, payload?: unknown) {
   const timestamp = new Date().toISOString();
-  const line = `${PREFIX}[${timestamp}][${scope}] ${message}`;
+  const line = `${PREFIX}[${timestamp}][${level}][${scope}] ${message}`;
 
   if (level === 'error') {
     console.error(line, payload ?? '');
@@ -49,6 +69,7 @@ function writeToLocalFile(level: LogLevel, scope: string, message: string, paylo
       scope,
       message,
       payload: stringifyPayload(payload),
+      location: resolveCallerLocation(),
     },
   }).catch(error => {
     console.error(`${PREFIX}[logger] 写入本地日志失败`, error);

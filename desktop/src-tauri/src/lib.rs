@@ -148,6 +148,7 @@ struct FrontendLogInput {
     scope: String,
     message: String,
     payload: Option<String>,
+    location: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -430,6 +431,7 @@ async fn list_tts_voices_inner(app: &AppHandle, config: &AppConfig) -> Result<Ve
         app,
         "info",
         "tts",
+        "desktop/src-tauri/src/lib.rs::list_tts_voices_inner",
         "开始拉取音色列表",
         Some(format!("endpoint={} provider={}", tts_config.id, tts_config.provider)),
     );
@@ -446,6 +448,7 @@ async fn list_tts_voices_inner(app: &AppHandle, config: &AppConfig) -> Result<Ve
             app,
             "error",
             "tts",
+            "desktop/src-tauri/src/lib.rs::list_tts_voices_inner",
             "音色列表接口失败",
             Some(format!("endpoint={} body={}", tts_config.id, text)),
         );
@@ -473,6 +476,7 @@ async fn list_tts_voices_inner(app: &AppHandle, config: &AppConfig) -> Result<Ve
         app,
         "info",
         "tts",
+        "desktop/src-tauri/src/lib.rs::list_tts_voices_inner",
         "音色列表拉取成功",
         Some(format!("endpoint={} count={}", tts_config.id, voices.len())),
     );
@@ -483,7 +487,7 @@ fn is_mp3_audio(bytes: &[u8]) -> bool {
     bytes.starts_with(b"ID3") || (bytes.len() >= 2 && bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0)
 }
 
-async fn synthesize_audio_bytes(config: &AppConfig, speaker: &str, text: &str) -> Result<Vec<u8>, String> {
+async fn synthesize_audio_bytes(app: &AppHandle, config: &AppConfig, speaker: &str, text: &str) -> Result<Vec<u8>, String> {
     let tts_config = config
         .tts_endpoints
         .iter()
@@ -497,12 +501,19 @@ async fn synthesize_audio_bytes(config: &AppConfig, speaker: &str, text: &str) -
         tts_config.customer_voice.as_str()
     };
 
-    println!(
-        "[sales-audio-ai][tts] 开始合成音频 endpoint={} provider={} speaker={} text_len={}",
-        tts_config.id,
-        tts_config.provider,
-        speaker,
-        text.chars().count()
+    write_backend_log(
+        app,
+        "info",
+        "tts",
+        "desktop/src-tauri/src/lib.rs::synthesize_audio_bytes",
+        "开始合成音频片段",
+        Some(format!(
+            "endpoint={} provider={} speaker={} text_len={}",
+            tts_config.id,
+            tts_config.provider,
+            speaker,
+            text.chars().count()
+        )),
     );
 
     match tts_config.provider.as_str() {
@@ -608,6 +619,7 @@ fn append_local_log(
     app: &AppHandle,
     level: &str,
     scope: &str,
+    location: Option<&str>,
     message: &str,
     payload: Option<&str>,
 ) -> Result<(), String> {
@@ -616,16 +628,22 @@ fn append_local_log(
         fs::create_dir_all(parent).map_err(|e| format!("创建日志目录失败: {e}"))?;
     }
 
+    let location_suffix = location
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("[{}]", value))
+        .unwrap_or_else(|| "[desktop/src-tauri/src/lib.rs]".into());
     let payload_suffix = payload
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| format!(" | {}", value))
         .unwrap_or_default();
     let line = format!(
-        "[sales-audio-ai][{}][{}][{}] {}{}\n",
+        "[sales-audio-ai][{}][{}][{}]{} {}{}\n",
         Local::now().to_rfc3339(),
         level,
         scope,
+        location_suffix,
         message,
         payload_suffix
     );
@@ -644,19 +662,20 @@ fn write_backend_log(
     app: &AppHandle,
     level: &str,
     scope: &str,
+    location: &str,
     message: &str,
     payload: Option<String>,
 ) {
     let payload_text = payload.as_deref();
-    let console_line = format!("[sales-audio-ai][{}] {}", scope, message);
+    let console_line = format!("[sales-audio-ai][{}][{}][{}] {}", level, scope, location, message);
     match level {
         "error" => eprintln!("{}{}", console_line, payload_text.map(|value| format!(" | {}", value)).unwrap_or_default()),
         "warn" => eprintln!("{}{}", console_line, payload_text.map(|value| format!(" | {}", value)).unwrap_or_default()),
         _ => println!("{}{}", console_line, payload_text.map(|value| format!(" | {}", value)).unwrap_or_default()),
     }
 
-    if let Err(error) = append_local_log(app, level, scope, message, payload_text) {
-        eprintln!("[sales-audio-ai][logger] 写入本地日志失败: {}", error);
+    if let Err(error) = append_local_log(app, level, scope, Some(location), message, payload_text) {
+        eprintln!("[sales-audio-ai][error][logger][desktop/src-tauri/src/lib.rs] 写入本地日志失败: {}", error);
     }
 }
 
@@ -691,7 +710,60 @@ fn open_workspace_db(app: &AppHandle) -> Result<Connection, String> {
         [],
     )
     .map_err(|e| format!("初始化音频记录表失败: {e}"))?;
+    cleanup_legacy_storage(&conn).map_err(|e| format!("清理遗留表失败: {e}"))?;
     Ok(conn)
+}
+
+fn cleanup_legacy_storage(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "DROP TABLE IF EXISTS audio_files;
+         DROP TABLE IF EXISTS dialog_scripts;
+         DROP TABLE IF EXISTS dialog_tasks;
+         DROP TABLE IF EXISTS app_config;",
+    )
+}
+
+fn cleanup_legacy_files(app: &AppHandle) -> Result<Vec<String>, String> {
+    let data_dir = app_data_dir(app)?;
+    let mut removed = Vec::new();
+
+    let direct_targets = [data_dir.join("workspace.json")];
+    for path in direct_targets {
+        if path.exists() {
+            fs::remove_file(&path).map_err(|e| format!("删除遗留文件失败: {}: {e}", path.to_string_lossy()))?;
+            removed.push(path.to_string_lossy().to_string());
+        }
+    }
+
+    let entries = fs::read_dir(&data_dir).map_err(|e| format!("读取应用目录失败: {e}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("读取应用目录条目失败: {e}"))?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let should_remove = name.starts_with("workspace.json.backup-") || name.starts_with("app.db.backup-");
+        if should_remove {
+            let path = entry.path();
+            fs::remove_file(&path).map_err(|e| format!("删除遗留备份失败: {}: {e}", path.to_string_lossy()))?;
+            removed.push(path.to_string_lossy().to_string());
+        }
+    }
+
+    Ok(removed)
+}
+
+fn remove_legacy_files_with_log(app: &AppHandle, location: &str) -> Result<(), String> {
+    let removed = cleanup_legacy_files(app)?;
+    if !removed.is_empty() {
+        write_backend_log(
+            app,
+            "info",
+            "workspace",
+            location,
+            "已清理遗留工作区文件",
+            Some(format!("count={} files={}", removed.len(), removed.join(", "))),
+        );
+    }
+    Ok(())
 }
 
 fn persist_audio_record(app: &AppHandle, batch_id: &str, audio: &AudioFileItem) -> Result<(), String> {
@@ -890,6 +962,7 @@ fn ensure_workspace(app: &AppHandle) -> Result<WorkspaceData, String> {
     if let Some(mut workspace) = load_workspace_from_db(app)? {
         normalize_config_paths(app, &mut workspace.config)?;
         persist_workspace_to_db(app, &workspace)?;
+        remove_legacy_files_with_log(app, "desktop/src-tauri/src/lib.rs::ensure_workspace")?;
         return Ok(workspace);
     }
 
@@ -898,10 +971,12 @@ fn ensure_workspace(app: &AppHandle) -> Result<WorkspaceData, String> {
     if !legacy_path.exists() {
         let workspace = default_workspace(app)?;
         persist_workspace_to_db(app, &workspace)?;
+        remove_legacy_files_with_log(app, "desktop/src-tauri/src/lib.rs::ensure_workspace")?;
         write_backend_log(
             app,
             "info",
             "workspace",
+            "desktop/src-tauri/src/lib.rs::ensure_workspace",
             "首次创建 SQLite 工作区",
             Some(format!("db={}", workspace_db_path(app)?.to_string_lossy())),
         );
@@ -947,7 +1022,8 @@ fn ensure_workspace(app: &AppHandle) -> Result<WorkspaceData, String> {
             app,
             "info",
             "workspace",
-            "历史工作区已迁移到 SQLite",
+            "desktop/src-tauri/src/lib.rs::ensure_workspace",
+            "已从历史 workspace.json 迁移工作区到 SQLite",
             Some(format!(
                 "legacy={} db={}",
                 legacy_path.to_string_lossy(),
@@ -956,6 +1032,7 @@ fn ensure_workspace(app: &AppHandle) -> Result<WorkspaceData, String> {
         );
     }
     persist_workspace_to_db(app, &workspace)?;
+    remove_legacy_files_with_log(app, "desktop/src-tauri/src/lib.rs::ensure_workspace")?;
     Ok(workspace)
 }
 
@@ -1168,6 +1245,7 @@ async fn call_remote_llm(app: &AppHandle, config: &AppConfig, input: &GenerateCo
         app,
         "info",
         "llm",
+        "desktop/src-tauri/src/lib.rs::call_remote_llm",
         "开始请求远程模型",
         Some(format!(
             "endpoint={} model={} scenario_len={} rounds={}",
@@ -1195,6 +1273,7 @@ async fn call_remote_llm(app: &AppHandle, config: &AppConfig, input: &GenerateCo
             app,
             "error",
             "llm",
+            "desktop/src-tauri/src/lib.rs::call_remote_llm",
             "远程模型返回失败",
             Some(format!("endpoint={} status={} body={}", llm_config.id, status, text)),
         );
@@ -1211,6 +1290,7 @@ async fn call_remote_llm(app: &AppHandle, config: &AppConfig, input: &GenerateCo
         app,
         "info",
         "llm",
+        "desktop/src-tauri/src/lib.rs::call_remote_llm",
         "收到模型原始内容",
         Some(format!(
             "endpoint={} preview={}",
@@ -1225,6 +1305,7 @@ async fn call_remote_llm(app: &AppHandle, config: &AppConfig, input: &GenerateCo
         app,
         "info",
         "llm",
+        "desktop/src-tauri/src/lib.rs::call_remote_llm",
         "对话解析成功",
         Some(format!("endpoint={} rows={}", llm_config.id, transcript.len())),
     );
@@ -1386,6 +1467,7 @@ fn write_log(app: AppHandle, input: FrontendLogInput) -> Result<(), String> {
         &app,
         input.level.trim(),
         input.scope.trim(),
+        input.location.as_deref().unwrap_or("frontend"),
         input.message.trim(),
         input.payload,
     );
@@ -1394,7 +1476,14 @@ fn write_log(app: AppHandle, input: FrontendLogInput) -> Result<(), String> {
 
 #[tauri::command]
 fn load_workspace(app: AppHandle) -> Result<WorkspaceData, String> {
-    write_backend_log(&app, "info", "workspace", "收到 load_workspace 请求", None);
+    write_backend_log(
+        &app,
+        "info",
+        "workspace",
+        "desktop/src-tauri/src/lib.rs::load_workspace",
+        "开始加载工作区配置",
+        Some(format!("db={}", workspace_db_path(&app)?.to_string_lossy())),
+    );
     ensure_workspace(&app)
 }
 
@@ -1404,7 +1493,8 @@ fn save_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, String> {
         &app,
         "info",
         "workspace",
-        "收到 save_config 请求",
+        "desktop/src-tauri/src/lib.rs::save_config",
+        "开始保存工作区配置",
         Some(format!(
             "llm_count={} tts_count={} active_llm={} active_tts={}",
             config.llm_endpoints.len(),
@@ -1425,7 +1515,8 @@ async fn generate_conversation(app: AppHandle, input: GenerateConversationInput)
         &app,
         "info",
         "generate",
-        "收到 generate_conversation 请求",
+        "desktop/src-tauri/src/lib.rs::generate_conversation",
+        "开始生成对话",
         Some(format!(
             "rounds={} llm_endpoint_id={}",
             input.rounds,
@@ -1442,7 +1533,8 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
         &app,
         "info",
         "audio",
-        "收到 generate_audio 请求",
+        "desktop/src-tauri/src/lib.rs::generate_audio",
+        "开始生成音频",
         Some(format!(
             "transcript_size={} audio_dir={}",
             input.transcript.len(),
@@ -1471,7 +1563,7 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
 
     // 仍然逐句合成，便于后端按顺序拼接，但音频页只展示最终合并文件。
     for (index, segment) in input.transcript.iter().enumerate() {
-        match synthesize_audio_bytes(&config, &segment.speaker, &segment.text).await {
+        match synthesize_audio_bytes(&app, &config, &segment.speaker, &segment.text).await {
             Ok(bytes) => {
                 let segment_name = format!("task_{:02}_{}.{}", index + 1, segment.speaker, segment_extension);
                 let segment_path = output_dir.join(&segment_name);
@@ -1482,6 +1574,7 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
                     &app,
                     "info",
                     "audio",
+                    "desktop/src-tauri/src/lib.rs::generate_audio",
                     "音频片段合成成功",
                     Some(format!(
                         "index={} provider={} ext={} path={}",
@@ -1497,6 +1590,7 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
                     &app,
                     "error",
                     "audio",
+                    "desktop/src-tauri/src/lib.rs::generate_audio",
                     "在线 TTS 失败，终止合并",
                     Some(format!("index={} error={}", index + 1, error)),
                 );
@@ -1525,6 +1619,7 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
         &app,
         "info",
         "audio",
+        "desktop/src-tauri/src/lib.rs::generate_audio",
         "合并音频输出完成",
         Some(format!("provider={} ext=wav path={}", tts_config.provider, merged_path.to_string_lossy())),
     );
@@ -1596,7 +1691,14 @@ async fn pick_path(app: AppHandle, kind: String) -> Result<String, String> {
 
 #[tauri::command]
 fn get_health_status(app: AppHandle) -> Result<HealthStatus, String> {
-    write_backend_log(&app, "info", "health", "收到 get_health_status 请求", None);
+    write_backend_log(
+        &app,
+        "info",
+        "health",
+        "desktop/src-tauri/src/lib.rs::get_health_status",
+        "开始检查应用健康状态",
+        None,
+    );
     let workspace = ensure_workspace(&app)?;
     let audio_dir = ensure_output_dir(&app_data_dir(&app)?, &workspace.config.audio_dir)?;
     let config_file = workspace_db_path(&app)?;
