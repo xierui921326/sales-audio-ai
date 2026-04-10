@@ -12,6 +12,7 @@ export interface TranscriptSegment {
     startTime: number;
     endTime: number;
     keywords?: string[];
+    isPartial?: boolean;
 }
 
 export interface SelectOption {
@@ -104,11 +105,38 @@ export interface GenerateConversationInput {
     supplementalPrompt?: string;
     llmEndpointId?: string;
     systemPrompt?: string;
+    requestId?: string;
 }
 
 export interface GenerateConversationOutput {
     transcript: TranscriptSegment[];
     taskInfo: TaskMetaItem[];
+}
+
+export const CONVERSATION_STARTED_EVENT = 'conversation_started';
+export const CONVERSATION_DELTA_EVENT = 'conversation_delta';
+export const CONVERSATION_COMPLETED_EVENT = 'conversation_completed';
+export const CONVERSATION_FAILED_EVENT = 'conversation_failed';
+
+export interface ConversationStreamBaseEvent {
+    requestId: string;
+}
+
+export interface ConversationStartedEvent extends ConversationStreamBaseEvent {
+    rounds: number;
+}
+
+export interface ConversationDeltaEvent extends ConversationStreamBaseEvent {
+    segment: TranscriptSegment;
+}
+
+export interface ConversationCompletedEvent extends ConversationStreamBaseEvent {
+    transcript: TranscriptSegment[];
+    taskInfo: TaskMetaItem[];
+}
+
+export interface ConversationFailedEvent extends ConversationStreamBaseEvent {
+    message: string;
 }
 
 export interface GenerateAudioInput {

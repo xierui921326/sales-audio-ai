@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { readFile } from '@tauri-apps/plugin-fs';
 import Sidebar from './components/layout/Sidebar';
 import StorageHeader from './components/config/StorageHeader';
@@ -18,6 +19,14 @@ import {
   GenerateConversationInput,
   GenerateConversationOutput,
   GenerateBusyState,
+  ConversationStartedEvent,
+  ConversationDeltaEvent,
+  ConversationCompletedEvent,
+  ConversationFailedEvent,
+  CONVERSATION_STARTED_EVENT,
+  CONVERSATION_DELTA_EVENT,
+  CONVERSATION_COMPLETED_EVENT,
+  CONVERSATION_FAILED_EVENT,
 } from './types';
 
 // Constants & Defaults
@@ -30,6 +39,24 @@ const DEFAULT_CONFIG: AppConfig = {
   databasePath: '',
   configFile: '',
 };
+
+function createRequestId(): string {
+  return `conversation-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function upsertTranscriptSegment(current: TranscriptSegment[], incoming: TranscriptSegment): TranscriptSegment[] {
+  const index = current.findIndex(segment => segment.id === incoming.id);
+  if (index === -1) {
+    return [...current, incoming];
+  }
+
+  const next = [...current];
+  next[index] = {
+    ...next[index],
+    ...incoming,
+  };
+  return next;
+}
 
 type GenerateDialogState = {
   title: string;
@@ -54,6 +81,8 @@ export default function App() {
   const [generateDialog, setGenerateDialog] = useState<GenerateDialogState>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioObjectUrlRef = useRef<string | null>(null);
+  const generateRequestIdRef = useRef<string | null>(null);
+  const generateListenersRef = useRef<UnlistenFn[]>([]);
 
   useEffect(() => {
     const audio = new Audio();
@@ -89,6 +118,22 @@ export default function App() {
       logger.error('audio', '加载音频历史失败', err);
     }
   }
+
+  function clearGenerateListeners() {
+    const listeners = generateListenersRef.current;
+    generateListenersRef.current = [];
+    for (const unlisten of listeners) {
+      void Promise.resolve(unlisten()).catch(err => {
+        logger.warn('generate', '清理对话流监听失败', err);
+      });
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      clearGenerateListeners();
+    };
+  }, []);
 
   // 应用启动时先读取本地工作区配置，后续所有页面都基于这份配置工作。
   useEffect(() => {
@@ -141,17 +186,64 @@ export default function App() {
 
   // 生成对话是桌面端的主链路：发请求、接收 transcript、失败时统一弹窗。
   async function handleGenerateConversation(params: GenerateConversationInput) {
+    const requestId = createRequestId();
+    generateRequestIdRef.current = requestId;
+    clearGenerateListeners();
     setBusy(current => ({ ...current, generatingConversation: true }));
     setGenerateDialog(null);
     setTranscript([]);
+
     try {
+      const listeners = await Promise.all([
+        listen<ConversationStartedEvent>(CONVERSATION_STARTED_EVENT, event => {
+          if (event.payload.requestId !== generateRequestIdRef.current) {
+            return;
+          }
+          logger.info('generate', '开始接收流式对话', { rounds: event.payload.rounds, requestId: event.payload.requestId });
+        }),
+        listen<ConversationDeltaEvent>(CONVERSATION_DELTA_EVENT, event => {
+          if (event.payload.requestId !== generateRequestIdRef.current) {
+            return;
+          }
+          setTranscript(current => upsertTranscriptSegment(current, event.payload.segment));
+        }),
+        listen<ConversationCompletedEvent>(CONVERSATION_COMPLETED_EVENT, event => {
+          if (event.payload.requestId !== generateRequestIdRef.current) {
+            return;
+          }
+          setTranscript(event.payload.transcript);
+          logger.info('generate', '流式对话完成事件已接收', {
+            transcriptSize: event.payload.transcript.length,
+            requestId: event.payload.requestId,
+          });
+        }),
+        listen<ConversationFailedEvent>(CONVERSATION_FAILED_EVENT, event => {
+          if (event.payload.requestId !== generateRequestIdRef.current) {
+            return;
+          }
+          logger.warn('generate', '流式对话失败事件已接收', {
+            message: event.payload.message,
+            requestId: event.payload.requestId,
+          });
+        }),
+      ]);
+      generateListenersRef.current = listeners;
+
       logger.info('generate', '开始生成对话', {
         rounds: params.rounds,
         llmEndpointId: params.llmEndpointId ?? '',
+        requestId,
       });
-      const result = await invoke<GenerateConversationOutput>('generate_conversation', { input: params });
-      setTranscript(result.transcript);
-      logger.info('generate', '生成对话成功', { transcriptSize: result.transcript.length });
+      const result = await invoke<GenerateConversationOutput>('generate_conversation', {
+        input: {
+          ...params,
+          requestId,
+        },
+      });
+      if (generateRequestIdRef.current === requestId) {
+        setTranscript(result.transcript);
+      }
+      logger.info('generate', '生成对话成功', { transcriptSize: result.transcript.length, requestId });
     } catch (err) {
       logger.error('generate', '生成对话失败', err);
       setGenerateDialog({
@@ -160,6 +252,10 @@ export default function App() {
         tone: 'error',
       });
     } finally {
+      if (generateRequestIdRef.current === requestId) {
+        generateRequestIdRef.current = null;
+      }
+      clearGenerateListeners();
       setBusy(current => ({ ...current, generatingConversation: false }));
     }
   }

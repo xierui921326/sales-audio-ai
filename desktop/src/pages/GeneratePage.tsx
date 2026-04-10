@@ -18,6 +18,33 @@ const DEFAULT_FORM: GenerateConversationInput = {
   supplementalPrompt: '',
 };
 
+const MIN_ROUNDS = 2;
+
+function normalizeRoundsInput(value: string): string {
+  return value.replace(/[^\d]/g, '');
+}
+
+function parseRounds(value: string): number | null {
+  if (!value.trim()) {
+    return null;
+  }
+
+  const rounds = Number(value);
+  if (!Number.isInteger(rounds)) {
+    return null;
+  }
+
+  return rounds;
+}
+
+function isValidRounds(value: string): boolean {
+  const rounds = parseRounds(value);
+  return rounds !== null && rounds >= MIN_ROUNDS;
+}
+
+export { MIN_ROUNDS };
+
+
 export default function GeneratePage({
   config,
   transcript,
@@ -26,6 +53,7 @@ export default function GeneratePage({
   busy,
 }: GeneratePageProps) {
   const [form, setForm] = React.useState<GenerateConversationInput>(DEFAULT_FORM);
+  const [roundsInput, setRoundsInput] = React.useState(String(DEFAULT_FORM.rounds));
 
   const llmOptions = React.useMemo(
     () => config.llmEndpoints.map(endpoint => ({
@@ -35,13 +63,6 @@ export default function GeneratePage({
     [config.llmEndpoints]
   );
 
-  const roundOptions = React.useMemo(
-    () => Array.from({ length: 11 }, (_, index) => {
-      const rounds = index + 2;
-      return { value: String(rounds), label: `${rounds} 轮` };
-    }),
-    []
-  );
 
   const defaultLlmId = React.useMemo(() => {
     if (config.activeLlmId && config.llmEndpoints.some(endpoint => endpoint.id === config.activeLlmId)) {
@@ -65,8 +86,13 @@ export default function GeneratePage({
   const selectedLlm = config.llmEndpoints.find(endpoint => endpoint.id === selectedLlmId);
   const defaultTts = config.ttsEndpoints.find(endpoint => endpoint.id === config.activeTtsId) ?? config.ttsEndpoints[0];
   const hasScenario = form.scenario.trim().length > 0;
-  const canGenerate = Boolean(selectedLlm?.apiKey && selectedLlm?.baseUrl && selectedLlm?.model && hasScenario);
+  const hasValidRounds = isValidRounds(roundsInput);
+  const canGenerate = Boolean(selectedLlm?.apiKey && selectedLlm?.baseUrl && selectedLlm?.model && hasScenario && hasValidRounds);
   const hasValidDefaultTts = Boolean(defaultTts?.salesVoice?.trim() && defaultTts?.customerVoice?.trim() && (defaultTts.provider === 'edge' || defaultTts.baseUrl?.trim()));
+  React.useEffect(() => {
+    const rounds = parseRounds(roundsInput) ?? DEFAULT_FORM.rounds;
+    setForm(prev => ({ ...prev, rounds }));
+  }, [roundsInput]);
   const isGeneratingConversation = busy.generatingConversation;
   const isGeneratingAudio = busy.generatingAudio;
   const recordingState: RecordingState = isGeneratingConversation ? 'processing' : transcript.length > 0 ? 'done' : 'idle';
@@ -80,9 +106,15 @@ export default function GeneratePage({
       return;
     }
 
+    const rounds = parseRounds(roundsInput);
+    if (rounds === null || rounds < MIN_ROUNDS) {
+      return;
+    }
+
     onGenerate({
       ...form,
       scenario: form.scenario.trim(),
+      rounds,
       supplementalPrompt: form.supplementalPrompt?.trim() ?? '',
       llmEndpointId: selectedLlmId,
     }).catch(err => {
@@ -126,12 +158,15 @@ export default function GeneratePage({
 
                 <div className="generate-advanced-panel">
                   <div className="field-block">
-                    <label>对话轮数</label>
-                    <ConfigSelect
-                      value={String(form.rounds)}
-                      options={roundOptions}
-                      onChange={value => updateForm('rounds', Number(value) || 2)}
-                      placeholder="请选择对话轮数"
+                    <label>{`对话轮数（≥${MIN_ROUNDS}）`}</label>
+                    <input
+                      className="field-control"
+                      type="number"
+                      min={MIN_ROUNDS}
+                      step={1}
+                      value={roundsInput}
+                      onChange={e => setRoundsInput(normalizeRoundsInput(e.target.value))}
+                      placeholder="请输入对话轮数"
                     />
                   </div>
 

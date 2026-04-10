@@ -1,5 +1,6 @@
 use chrono::Local;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use futures_util::StreamExt;
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -8,7 +9,7 @@ use std::{
     panic::Location,
     path::{Path, PathBuf},
 };
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
 use zip::write::SimpleFileOptions;
 
@@ -21,6 +22,7 @@ struct TranscriptSegment {
     start_time: u32,
     end_time: u32,
     keywords: Option<Vec<String>>,
+    is_partial: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -140,6 +142,7 @@ struct GenerateConversationInput {
     supplemental_prompt: Option<String>,
     llm_endpoint_id: Option<String>,
     system_prompt: Option<String>,
+    request_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -202,58 +205,193 @@ struct LlmTranscriptRow {
     text: String,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum OpenAiMessageContent {
-    Text(String),
-    Parts(Vec<OpenAiContentPart>),
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenAiContentPart {
-    #[serde(rename = "type")]
-    part_type: Option<String>,
-    text: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenAiResponseMessage {
-    content: OpenAiMessageContent,
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OpenAiRequest {
     model: String,
     messages: Vec<OpenAiMessage>,
     temperature: f32,
+    stream: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct AnthropicTextBlock {
+    #[serde(rename = "type")]
+    block_type: String,
+    text: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AnthropicMessage {
+    role: String,
+    content: Vec<AnthropicTextBlock>,
+}
+
+#[derive(Debug, Serialize)]
+struct AnthropicMessagesRequest {
+    model: String,
+    system: String,
+    messages: Vec<AnthropicMessage>,
+    temperature: f32,
+    max_tokens: u32,
+    stream: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ConversationStartedEvent {
+    request_id: String,
+    rounds: u32,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ConversationDeltaEvent {
+    request_id: String,
+    segment: TranscriptSegment,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ConversationCompletedEvent {
+    request_id: String,
+    transcript: Vec<TranscriptSegment>,
+    task_info: Vec<TaskMetaItem>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ConversationFailedEvent {
+    request_id: String,
+    message: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct OpenAiResponse {
-    choices: Vec<OpenAiChoice>,
+struct OpenAiStreamResponse {
+    choices: Vec<OpenAiStreamChoice>,
 }
 
 #[derive(Debug, Deserialize)]
-struct OpenAiChoice {
-    message: OpenAiResponseMessage,
+struct OpenAiStreamChoice {
+    #[serde(default)]
+    delta: Option<OpenAiStreamDelta>,
+    #[serde(default)]
+    message: Option<OpenAiStreamDelta>,
+    #[serde(default)]
+    text: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct GeminiResponse {
-    candidates: Vec<GeminiCandidate>,
+struct OpenAiStreamDelta {
+    #[serde(default)]
+    content: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
-struct GeminiCandidate {
-    content: Option<GeminiContent>,
-    output: Option<String>,
+struct AnthropicStreamEvent {
+    #[serde(default, rename = "type")]
+    event_type: String,
+    #[serde(default)]
+    delta: Option<AnthropicStreamDelta>,
+    #[serde(default)]
+    error: Option<AnthropicErrorPayload>,
 }
 
 #[derive(Debug, Deserialize)]
-struct GeminiContent {
-    parts: Vec<OpenAiContentPart>,
+struct AnthropicStreamDelta {
+    #[serde(default, rename = "type")]
+    delta_type: String,
+    #[serde(default)]
+    text: Option<String>,
 }
+
+#[derive(Debug, Deserialize)]
+struct AnthropicErrorPayload {
+    #[serde(default)]
+    message: String,
+}
+
+#[derive(Debug)]
+struct SseFrame {
+    event: Option<String>,
+    data: String,
+}
+
+#[derive(Debug)]
+enum ParsedSseEvent {
+    TextDelta(String),
+    Error(String),
+    Ignore,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum LlmStreamProtocol {
+    OpenAiCompatible,
+    AnthropicMessages,
+}
+
+impl LlmStreamProtocol {
+    fn from_provider(provider: &str) -> Self {
+        if provider.trim().eq_ignore_ascii_case("anthropic") {
+            Self::AnthropicMessages
+        } else {
+            Self::OpenAiCompatible
+        }
+    }
+}
+
+#[derive(Debug)]
+struct LlmStreamResult {
+    accumulated_content: String,
+    streamed_segment_count: usize,
+    unmatched_frame_preview: Option<String>,
+}
+
+#[derive(Debug)]
+struct LlmRequestContext<'a> {
+    app: &'a AppHandle,
+    request_id: &'a str,
+}
+
+#[derive(Debug)]
+struct LlmRequestPayload {
+    url: String,
+    headers: Vec<(&'static str, String)>,
+    body: serde_json::Value,
+    protocol: LlmStreamProtocol,
+}
+
+#[derive(Debug)]
+struct StreamFrameIssue {
+    preview: String,
+    error_message: Option<String>,
+}
+
+impl StreamFrameIssue {
+    fn from_error(preview: String, error_message: String) -> Self {
+        Self {
+            preview,
+            error_message: Some(error_message),
+        }
+    }
+}
+
+impl StreamFrameIssue {
+    fn into_preview(self) -> String {
+        match self.error_message {
+            Some(error_message) => format!("parse_error={} raw={}", error_message, self.preview),
+            None => self.preview,
+        }
+    }
+}
+
+const ANTHROPIC_VERSION: &str = "2023-06-01";
+const DEFAULT_LLM_TEMPERATURE: f32 = 0.7;
+const DEFAULT_ANTHROPIC_MAX_TOKENS: u32 = 4096;
+const OPENAI_STREAM_DONE_SENTINEL: &str = "[DONE]";
+const SSE_FRAME_SEPARATOR: &str = "\n\n";
+const FRAME_PREVIEW_LIMIT: usize = 240;
+const RAW_CONTENT_PREVIEW_LIMIT: usize = 180;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1108,68 +1246,582 @@ fn extract_json_block(content: &str) -> Option<String> {
     Some(fenced[start..=end].to_string())
 }
 
-fn normalize_openai_message_content(content: OpenAiMessageContent) -> String {
-    match content {
-        OpenAiMessageContent::Text(text) => text,
-        OpenAiMessageContent::Parts(parts) => parts
-            .into_iter()
-            .filter(|part| part.part_type.as_deref().unwrap_or("text") == "text")
-            .filter_map(|part| part.text)
-            .collect::<Vec<_>>()
-            .join("\n"),
+fn extract_text_from_json_value(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(text.clone())
+            }
+        }
+        serde_json::Value::Array(items) => {
+            let collected = items
+                .iter()
+                .filter_map(extract_text_from_json_value)
+                .collect::<String>();
+            if collected.trim().is_empty() {
+                None
+            } else {
+                Some(collected)
+            }
+        }
+        serde_json::Value::Object(map) => {
+            if let Some(text) = map.get("text").and_then(extract_text_from_json_value) {
+                return Some(text);
+            }
+            if let Some(text) = map.get("content").and_then(extract_text_from_json_value) {
+                return Some(text);
+            }
+            if let Some(text) = map.get("value").and_then(extract_text_from_json_value) {
+                return Some(text);
+            }
+            if let Some(text) = map.get("output_text").and_then(extract_text_from_json_value) {
+                return Some(text);
+            }
+            None
+        }
+        _ => None,
     }
 }
 
-fn try_extract_openai_response_content(text: &str) -> Result<Option<String>, serde_json::Error> {
-    let payload: OpenAiResponse = serde_json::from_str(text)?;
-    Ok(payload
-        .choices
-        .into_iter()
-        .next()
-        .map(|choice| normalize_openai_message_content(choice.message.content))
-        .filter(|value| !value.trim().is_empty()))
+fn extract_openai_stream_delta_content(text: &str) -> Result<Option<String>, serde_json::Error> {
+    let payload: OpenAiStreamResponse = serde_json::from_str(text)?;
+    Ok(payload.choices.into_iter().find_map(|choice| {
+        choice
+            .delta
+            .as_ref()
+            .and_then(|delta| delta.content.as_ref())
+            .and_then(extract_text_from_json_value)
+            .or_else(|| {
+                choice
+                    .message
+                    .as_ref()
+                    .and_then(|delta| delta.content.as_ref())
+                    .and_then(extract_text_from_json_value)
+            })
+            .or_else(|| choice.text.filter(|value| !value.trim().is_empty()))
+    }))
 }
 
-fn try_extract_gemini_response_content(text: &str) -> Result<Option<String>, serde_json::Error> {
-    let payload: GeminiResponse = serde_json::from_str(text)?;
-    Ok(payload
-        .candidates
-        .into_iter()
-        .find_map(|candidate| {
-            candidate
-                .content
-                .map(|content| {
-                    content
-                        .parts
-                        .into_iter()
-                        .filter(|part| part.part_type.as_deref().unwrap_or("text") == "text")
-                        .filter_map(|part| part.text)
-                        .collect::<Vec<_>>()
-                        .join("\n")
+fn extract_anthropic_stream_delta_content(text: &str) -> Result<ParsedSseEvent, serde_json::Error> {
+    let payload: AnthropicStreamEvent = serde_json::from_str(text)?;
+    Ok(match payload.event_type.as_str() {
+        "content_block_delta" => {
+            let delta = payload.delta.and_then(|delta| {
+                if delta.delta_type == "text_delta" {
+                    delta.text.filter(|value| !value.trim().is_empty())
+                } else {
+                    None
+                }
+            });
+
+            match delta {
+                Some(text) => ParsedSseEvent::TextDelta(text),
+                None => ParsedSseEvent::Ignore,
+            }
+        }
+        "error" => ParsedSseEvent::Error(
+            payload
+                .error
+                .map(|error| error.message)
+                .filter(|message| !message.trim().is_empty())
+                .unwrap_or_else(|| "模型流式响应返回错误事件".into()),
+        ),
+        "message_start" | "content_block_start" | "content_block_stop" | "message_delta" | "message_stop" | "ping" => {
+            ParsedSseEvent::Ignore
+        }
+        _ => ParsedSseEvent::Ignore,
+    })
+}
+
+fn normalize_sse_buffer(buffer: &mut String) {
+    if buffer.contains("\r\n") {
+        *buffer = buffer.replace("\r\n", "\n");
+    }
+}
+
+fn parse_sse_frame(frame: &str) -> Option<SseFrame> {
+    let mut event_name: Option<String> = None;
+    let mut data_lines = Vec::new();
+
+    for line in frame.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with(':') {
+            continue;
+        }
+
+        if let Some(value) = trimmed.strip_prefix("event:") {
+            let value = value.trim();
+            if !value.is_empty() {
+                event_name = Some(value.to_string());
+            }
+            continue;
+        }
+
+        if let Some(value) = trimmed.strip_prefix("data:") {
+            data_lines.push(value.trim().to_string());
+        }
+    }
+
+    if data_lines.is_empty() {
+        return None;
+    }
+
+    Some(SseFrame {
+        event: event_name,
+        data: data_lines.join("\n"),
+    })
+}
+
+fn parse_stream_frame(protocol: LlmStreamProtocol, frame: &SseFrame) -> Result<ParsedSseEvent, StreamFrameIssue> {
+    let data = frame.data.trim();
+    if data.is_empty() {
+        return Ok(ParsedSseEvent::Ignore);
+    }
+
+    match protocol {
+        LlmStreamProtocol::OpenAiCompatible => {
+            if data == OPENAI_STREAM_DONE_SENTINEL {
+                return Ok(ParsedSseEvent::Ignore);
+            }
+
+            extract_openai_stream_delta_content(data)
+                .map(|result| match result {
+                    Some(delta) => ParsedSseEvent::TextDelta(delta),
+                    None => ParsedSseEvent::Ignore,
                 })
-                .filter(|value| !value.trim().is_empty())
-                .or_else(|| candidate.output.filter(|value| !value.trim().is_empty()))
-        }))
+                .map_err(|error| {
+                    StreamFrameIssue::from_error(
+                        data.chars().take(FRAME_PREVIEW_LIMIT).collect(),
+                        error.to_string(),
+                    )
+                })
+        }
+        LlmStreamProtocol::AnthropicMessages => {
+            let parse_target = if matches!(frame.event.as_deref(), Some(event) if !event.trim().is_empty()) {
+                data
+            } else {
+                data
+            };
+
+            extract_anthropic_stream_delta_content(parse_target).map_err(|error| {
+                StreamFrameIssue::from_error(
+                    parse_target.chars().take(FRAME_PREVIEW_LIMIT).collect(),
+                    error.to_string(),
+                )
+            })
+        }
+    }
 }
 
-fn extract_llm_response_content(text: &str) -> Result<String, String> {
-    match try_extract_openai_response_content(text) {
-        Ok(Some(content)) => return Ok(content),
-        Ok(None) => {}
-        Err(_) => {}
+fn build_llm_request_payload(
+    llm_config: &LlmEndpointConfig,
+    system_prompt: &str,
+    user_prompt: &str,
+) -> Result<LlmRequestPayload, String> {
+    let base_url = llm_config.base_url.trim_end_matches('/');
+    if base_url.is_empty() {
+        return Err("未配置 LLM Base URL".into());
     }
 
-    match try_extract_gemini_response_content(text) {
-        Ok(Some(content)) => return Ok(content),
-        Ok(None) => {}
-        Err(_) => {}
+    let protocol = LlmStreamProtocol::from_provider(&llm_config.provider);
+    match protocol {
+        LlmStreamProtocol::AnthropicMessages => {
+            let request = AnthropicMessagesRequest {
+                model: llm_config.model.clone(),
+                system: system_prompt.to_string(),
+                messages: vec![AnthropicMessage {
+                    role: "user".into(),
+                    content: vec![AnthropicTextBlock {
+                        block_type: "text".into(),
+                        text: user_prompt.to_string(),
+                    }],
+                }],
+                temperature: DEFAULT_LLM_TEMPERATURE,
+                max_tokens: DEFAULT_ANTHROPIC_MAX_TOKENS,
+                stream: true,
+            };
+
+            Ok(LlmRequestPayload {
+                url: format!("{}/messages", base_url),
+                headers: vec![
+                    ("x-api-key", llm_config.api_key.clone()),
+                    ("anthropic-version", ANTHROPIC_VERSION.to_string()),
+                    (CONTENT_TYPE.as_str(), "application/json".into()),
+                    (ACCEPT.as_str(), "text/event-stream".into()),
+                ],
+                body: serde_json::to_value(&request).map_err(|e| format!("序列化 /messages 请求体失败: {e}"))?,
+                protocol,
+            })
+        }
+        LlmStreamProtocol::OpenAiCompatible => {
+            let request = OpenAiRequest {
+                model: llm_config.model.clone(),
+                messages: vec![
+                    OpenAiMessage {
+                        role: "system".into(),
+                        content: system_prompt.to_string(),
+                    },
+                    OpenAiMessage {
+                        role: "user".into(),
+                        content: user_prompt.to_string(),
+                    },
+                ],
+                temperature: DEFAULT_LLM_TEMPERATURE,
+                stream: true,
+            };
+
+            Ok(LlmRequestPayload {
+                url: format!("{}/chat/completions", base_url),
+                headers: vec![
+                    (AUTHORIZATION.as_str(), format!("Bearer {}", llm_config.api_key)),
+                    (CONTENT_TYPE.as_str(), "application/json".into()),
+                    (ACCEPT.as_str(), "text/event-stream".into()),
+                ],
+                body: serde_json::to_value(&request).map_err(|e| format!("序列化 chat/completions 请求体失败: {e}"))?,
+                protocol,
+            })
+        }
+    }
+}
+
+fn append_text_delta_and_emit(
+    app: &AppHandle,
+    request_id: &str,
+    accumulated_content: &mut String,
+    streamed_segment_count: &mut usize,
+    delta: &str,
+) -> Result<(), String> {
+    accumulated_content.push_str(delta);
+    let partial_transcript = build_partial_transcript(accumulated_content);
+    if partial_transcript.len() > *streamed_segment_count {
+        for segment in partial_transcript.iter().skip(*streamed_segment_count) {
+            emit_conversation_delta(app, request_id, segment)?;
+        }
+        *streamed_segment_count = partial_transcript.len();
+    }
+    Ok(())
+}
+
+async fn consume_llm_stream(
+    context: &LlmRequestContext<'_>,
+    response: reqwest::Response,
+    protocol: LlmStreamProtocol,
+) -> Result<LlmStreamResult, String> {
+    let mut stream = response.bytes_stream();
+    let mut sse_buffer = String::new();
+    let mut accumulated_content = String::new();
+    let mut streamed_segment_count = 0usize;
+    let mut unmatched_frame_preview: Option<String> = None;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("读取远程模型流失败: {e}"))?;
+        let text = String::from_utf8_lossy(&chunk);
+        sse_buffer.push_str(&text);
+        normalize_sse_buffer(&mut sse_buffer);
+
+        while let Some(split_at) = sse_buffer.find(SSE_FRAME_SEPARATOR) {
+            let frame_text = sse_buffer[..split_at].to_string();
+            sse_buffer.drain(..split_at + SSE_FRAME_SEPARATOR.len());
+
+            let Some(frame) = parse_sse_frame(&frame_text) else {
+                continue;
+            };
+
+            match parse_stream_frame(protocol, &frame) {
+                Ok(ParsedSseEvent::TextDelta(delta)) => {
+                    append_text_delta_and_emit(
+                        context.app,
+                        context.request_id,
+                        &mut accumulated_content,
+                        &mut streamed_segment_count,
+                        &delta,
+                    )?;
+                }
+                Ok(ParsedSseEvent::Error(message)) => {
+                    let _ = emit_conversation_failed(context.app, context.request_id, &message);
+                    return Err(message);
+                }
+                Ok(ParsedSseEvent::Ignore) => {
+                    if unmatched_frame_preview.is_none() && !frame.data.trim().is_empty() {
+                        unmatched_frame_preview = Some(
+                            frame
+                                .data
+                                .trim()
+                                .chars()
+                                .take(FRAME_PREVIEW_LIMIT)
+                                .collect(),
+                        );
+                    }
+                }
+                Err(issue) => {
+                    if unmatched_frame_preview.is_none() {
+                        unmatched_frame_preview = Some(issue.into_preview());
+                    }
+                }
+            }
+        }
     }
 
-    let snippet = text.chars().take(240).collect::<String>();
-    Err(format!(
-        "解析远程模型响应失败：当前返回格式既不是 OpenAI Chat Completions，也不是 Gemini candidates。返回内容片段：{}",
-        snippet
-    ))
+    normalize_sse_buffer(&mut sse_buffer);
+    if let Some(frame) = parse_sse_frame(&sse_buffer) {
+        match parse_stream_frame(protocol, &frame) {
+            Ok(ParsedSseEvent::TextDelta(delta)) => {
+                append_text_delta_and_emit(
+                    context.app,
+                    context.request_id,
+                    &mut accumulated_content,
+                    &mut streamed_segment_count,
+                    &delta,
+                )?;
+            }
+            Ok(ParsedSseEvent::Error(message)) => {
+                let _ = emit_conversation_failed(context.app, context.request_id, &message);
+                return Err(message);
+            }
+            Ok(ParsedSseEvent::Ignore) => {
+                if unmatched_frame_preview.is_none() && !frame.data.trim().is_empty() {
+                    unmatched_frame_preview = Some(frame.data.trim().chars().take(FRAME_PREVIEW_LIMIT).collect());
+                }
+            }
+            Err(issue) => {
+                if unmatched_frame_preview.is_none() {
+                    unmatched_frame_preview = Some(issue.into_preview());
+                }
+            }
+        }
+    }
+
+    Ok(LlmStreamResult {
+        accumulated_content,
+        streamed_segment_count,
+        unmatched_frame_preview,
+    })
+}
+
+fn protocol_name(protocol: LlmStreamProtocol) -> &'static str {
+    match protocol {
+        LlmStreamProtocol::OpenAiCompatible => "chat/completions",
+        LlmStreamProtocol::AnthropicMessages => "messages",
+    }
+}
+
+fn maybe_emit_remaining_partial_segments(
+    app: &AppHandle,
+    request_id: &str,
+    accumulated_content: &str,
+    streamed_segment_count: usize,
+) -> Result<(), String> {
+    let partial_transcript = build_partial_transcript(accumulated_content);
+    if partial_transcript.len() > streamed_segment_count {
+        for segment in partial_transcript.iter().skip(streamed_segment_count) {
+            emit_conversation_delta(app, request_id, segment)?;
+        }
+    }
+    Ok(())
+}
+
+fn preview_text(value: &str, limit: usize) -> String {
+    value.chars().take(limit).collect()
+}
+
+fn build_remote_model_error_text(response_text: &str) -> String {
+    if response_text.trim().is_empty() {
+        "远程模型返回失败，且响应体为空".into()
+    } else {
+        format!("远程模型返回失败: {}", response_text)
+    }
+}
+
+fn log_remote_model_failure(app: &AppHandle, endpoint_id: &str, protocol: LlmStreamProtocol, status: reqwest::StatusCode, text: &str) {
+    write_backend_log(
+        app,
+        "error",
+        "llm",
+        "desktop/src-tauri/src/lib.rs::call_remote_llm",
+        "远程模型返回失败",
+        Some(format!(
+            "endpoint={} protocol={} status={} body={}",
+            endpoint_id,
+            protocol_name(protocol),
+            status,
+            text
+        )),
+    );
+}
+
+fn log_unparsed_stream_preview(app: &AppHandle, endpoint_id: &str, protocol: LlmStreamProtocol, unmatched_frame_preview: Option<String>) {
+    write_backend_log(
+        app,
+        "warn",
+        "llm",
+        "desktop/src-tauri/src/lib.rs::call_remote_llm",
+        "流式响应未解析出文本增量",
+        unmatched_frame_preview.map(|preview| {
+            format!(
+                "endpoint={} protocol={} frame={}",
+                endpoint_id,
+                protocol_name(protocol),
+                preview
+            )
+        }),
+    );
+}
+
+fn log_raw_model_content(app: &AppHandle, endpoint_id: &str, protocol: LlmStreamProtocol, content: &str) {
+    write_backend_log(
+        app,
+        "info",
+        "llm",
+        "desktop/src-tauri/src/lib.rs::call_remote_llm",
+        "收到模型原始内容",
+        Some(format!(
+            "endpoint={} protocol={} preview={}",
+            endpoint_id,
+            protocol_name(protocol),
+            preview_text(content, RAW_CONTENT_PREVIEW_LIMIT)
+        )),
+    );
+}
+
+fn log_transcript_parse_success(app: &AppHandle, endpoint_id: &str, protocol: LlmStreamProtocol, row_count: usize) {
+    write_backend_log(
+        app,
+        "info",
+        "llm",
+        "desktop/src-tauri/src/lib.rs::call_remote_llm",
+        "对话解析成功",
+        Some(format!(
+            "endpoint={} protocol={} rows={}",
+            endpoint_id,
+            protocol_name(protocol),
+            row_count
+        )),
+    );
+}
+
+fn apply_request_headers(
+    request: reqwest::RequestBuilder,
+    headers: &[(impl AsRef<str>, String)],
+) -> reqwest::RequestBuilder {
+    headers.iter().fold(request, |builder, (key, value)| builder.header(key.as_ref(), value))
+}
+
+fn build_llm_request_log_payload(
+    llm_config: &LlmEndpointConfig,
+    scenario_len: usize,
+    rounds: u32,
+    request_id: &str,
+    protocol: LlmStreamProtocol,
+    url: &str,
+) -> String {
+    format!(
+        "endpoint={} provider={} protocol={} url={} model={} scenario_len={} rounds={} request_id={}",
+        llm_config.id,
+        llm_config.provider,
+        protocol_name(protocol),
+        url,
+        llm_config.model,
+        scenario_len,
+        rounds,
+        request_id
+    )
+}
+
+fn emit_conversation_started(app: &AppHandle, request_id: &str, rounds: u32) -> Result<(), String> {
+    app.emit(
+        "conversation_started",
+        ConversationStartedEvent {
+            request_id: request_id.to_string(),
+            rounds,
+        },
+    )
+    .map_err(|e| format!("发送开始事件失败: {e}"))
+}
+
+fn emit_conversation_delta(app: &AppHandle, request_id: &str, segment: &TranscriptSegment) -> Result<(), String> {
+    app.emit(
+        "conversation_delta",
+        ConversationDeltaEvent {
+            request_id: request_id.to_string(),
+            segment: segment.clone(),
+        },
+    )
+    .map_err(|e| format!("发送增量事件失败: {e}"))
+}
+
+fn emit_conversation_completed(
+    app: &AppHandle,
+    request_id: &str,
+    transcript: &[TranscriptSegment],
+    task_info: &[TaskMetaItem],
+) -> Result<(), String> {
+    app.emit(
+        "conversation_completed",
+        ConversationCompletedEvent {
+            request_id: request_id.to_string(),
+            transcript: transcript.to_vec(),
+            task_info: task_info.to_vec(),
+        },
+    )
+    .map_err(|e| format!("发送完成事件失败: {e}"))
+}
+
+fn emit_conversation_failed(app: &AppHandle, request_id: &str, message: &str) -> Result<(), String> {
+    app.emit(
+        "conversation_failed",
+        ConversationFailedEvent {
+            request_id: request_id.to_string(),
+            message: message.to_string(),
+        },
+    )
+    .map_err(|e| format!("发送失败事件失败: {e}"))
+}
+
+fn streaming_task_info(scenario: &str) -> Vec<TaskMetaItem> {
+    vec![
+        TaskMetaItem {
+            label: "任务 ID".into(),
+            value: format!("remote-{}", scenario),
+            tone: Some("neutral".into()),
+        },
+        TaskMetaItem {
+            label: "生成时间".into(),
+            value: now_text(),
+            tone: Some("neutral".into()),
+        },
+        TaskMetaItem {
+            label: "状态".into(),
+            value: "远程模型已生成".into(),
+            tone: Some("success".into()),
+        },
+    ]
+}
+
+fn build_partial_transcript(content: &str) -> Vec<TranscriptSegment> {
+    let rows = match parse_llm_transcript_rows(content) {
+        Ok(rows) => rows,
+        Err(_) => return Vec::new(),
+    };
+
+    rows.into_iter()
+        .map(|mut segment| {
+            segment.is_partial = Some(true);
+            segment
+        })
+        .collect()
+}
+
+fn normalize_final_transcript(transcript: Vec<TranscriptSegment>) -> Vec<TranscriptSegment> {
+    transcript
+        .into_iter()
+        .map(|mut segment| {
+            segment.is_partial = Some(false);
+            segment
+        })
+        .collect()
 }
 
 fn normalize_llm_speaker(value: &str) -> String {
@@ -1218,6 +1870,7 @@ fn parse_llm_transcript_rows(content: &str) -> Result<Vec<TranscriptSegment>, St
                 start_time: (idx as u32) * 4,
                 end_time: (idx as u32) * 4 + 4,
                 keywords: None,
+                is_partial: None,
             })
         })
         .collect()
@@ -1259,14 +1912,22 @@ async fn call_remote_llm(app: &AppHandle, config: &AppConfig, input: &GenerateCo
     if scenario.chars().count() > 500 {
         return Err("对话场景长度不能超过 500 个字符".into());
     }
+    if input.rounds < 2 {
+        return Err("对话轮数需大于等于 2。".into());
+    }
     if let Some(extra) = supplemental_prompt {
         if extra.chars().count() > 1000 {
             return Err("补充要求长度不能超过 1000 个字符".into());
         }
     }
 
-    let base_url = llm_config.base_url.trim_end_matches('/');
-    let url = format!("{}/chat/completions", base_url);
+    let request_id = input
+        .request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("conversation-{}", Local::now().timestamp_millis()));
     let system_prompt = input.system_prompt.clone().unwrap_or_else(|| {
         "你是一名资深销售教练。请根据输入生成销售与客户的多轮中文对话。严格返回 JSON 数组，不要额外解释。数组元素格式：{\"speaker\":\"sales|customer\",\"text\":\"...\"}；如果你的模型习惯输出 role/content，也必须确保 role 只使用 sales 或 customer。".into()
     });
@@ -1280,43 +1941,30 @@ async fn call_remote_llm(app: &AppHandle, config: &AppConfig, input: &GenerateCo
         scenario, input.rounds, supplemental_hint
     );
 
-    let request = OpenAiRequest {
-        model: llm_config.model.clone(),
-        messages: vec![
-            OpenAiMessage {
-                role: "system".into(),
-                content: system_prompt.into(),
-            },
-            OpenAiMessage {
-                role: "user".into(),
-                content: user_prompt,
-            },
-        ],
-        temperature: 0.7,
-    };
+    let request_payload = build_llm_request_payload(llm_config, &system_prompt, &user_prompt)?;
+    let request_log = build_llm_request_log_payload(
+        llm_config,
+        scenario.chars().count(),
+        input.rounds,
+        &request_id,
+        request_payload.protocol,
+        &request_payload.url,
+    );
 
-    // 这里统一把控制台日志和本地文件日志写在一起，避免前后端日志分散难排查。
     write_backend_log(
         app,
         "info",
         "llm",
         "desktop/src-tauri/src/lib.rs::call_remote_llm",
         "开始请求远程模型",
-        Some(format!(
-            "endpoint={} model={} scenario_len={} rounds={}",
-            llm_config.id,
-            llm_config.model,
-            scenario.chars().count(),
-            input.rounds
-        )),
+        Some(request_log),
     );
 
+    emit_conversation_started(app, &request_id, input.rounds)?;
+
     let client = reqwest::Client::new();
-    let response = client
-        .post(url)
-        .header(AUTHORIZATION, format!("Bearer {}", api_key))
-        .header(CONTENT_TYPE, "application/json")
-        .json(&request)
+    let response = apply_request_headers(client.post(&request_payload.url), &request_payload.headers)
+        .json(&request_payload.body)
         .send()
         .await
         .map_err(|e| format!("请求远程模型失败: {e}"))?;
@@ -1324,66 +1972,52 @@ async fn call_remote_llm(app: &AppHandle, config: &AppConfig, input: &GenerateCo
     let status = response.status();
     if !status.is_success() {
         let text = response.text().await.unwrap_or_default();
-        write_backend_log(
-            app,
-            "error",
-            "llm",
-            "desktop/src-tauri/src/lib.rs::call_remote_llm",
-            "远程模型返回失败",
-            Some(format!("endpoint={} status={} body={}", llm_config.id, status, text)),
-        );
-        return Err(format!("远程模型返回失败: {}", text));
+        log_remote_model_failure(app, &llm_config.id, request_payload.protocol, status, &text);
+        let failure_message = build_remote_model_error_text(&text);
+        let _ = emit_conversation_failed(app, &request_id, &failure_message);
+        return Err(failure_message);
     }
 
-    let response_text = response
-        .text()
-        .await
-        .map_err(|e| format!("读取远程模型响应失败: {e}"))?;
-    let content = extract_llm_response_content(&response_text)?;
-
-    write_backend_log(
+    let context = LlmRequestContext {
         app,
-        "info",
-        "llm",
-        "desktop/src-tauri/src/lib.rs::call_remote_llm",
-        "收到模型原始内容",
-        Some(format!(
-            "endpoint={} preview={}",
-            llm_config.id,
-            content.chars().take(180).collect::<String>()
-        )),
-    );
+        request_id: &request_id,
+    };
+    let stream_result = consume_llm_stream(&context, response, request_payload.protocol).await?;
 
-    let transcript = parse_llm_transcript_rows(&content)?;
+    if stream_result.accumulated_content.trim().is_empty() {
+        log_unparsed_stream_preview(
+            app,
+            &llm_config.id,
+            request_payload.protocol,
+            stream_result.unmatched_frame_preview.clone(),
+        );
+    }
 
-    write_backend_log(
+    maybe_emit_remaining_partial_segments(
         app,
-        "info",
-        "llm",
-        "desktop/src-tauri/src/lib.rs::call_remote_llm",
-        "对话解析成功",
-        Some(format!("endpoint={} rows={}", llm_config.id, transcript.len())),
-    );
+        &request_id,
+        &stream_result.accumulated_content,
+        stream_result.streamed_segment_count,
+    )?;
+
+    let content = stream_result.accumulated_content.trim();
+    if content.is_empty() {
+        let message = "模型未返回有效内容".to_string();
+        let _ = emit_conversation_failed(app, &request_id, &message);
+        return Err(message);
+    }
+
+    log_raw_model_content(app, &llm_config.id, request_payload.protocol, content);
+
+    let transcript = normalize_final_transcript(parse_llm_transcript_rows(content)?);
+    let task_info = streaming_task_info(scenario);
+
+    log_transcript_parse_success(app, &llm_config.id, request_payload.protocol, transcript.len());
+    emit_conversation_completed(app, &request_id, &transcript, &task_info)?;
 
     Ok(GenerateConversationOutput {
         transcript,
-        task_info: vec![
-            TaskMetaItem {
-                label: "任务 ID".into(),
-                value: format!("remote-{}", scenario),
-                tone: Some("neutral".into()),
-            },
-            TaskMetaItem {
-                label: "生成时间".into(),
-                value: now_text(),
-                tone: Some("neutral".into()),
-            },
-            TaskMetaItem {
-                label: "状态".into(),
-                value: "远程模型已生成".into(),
-                tone: Some("success".into()),
-            },
-        ],
+        task_info,
     })
 }
 
