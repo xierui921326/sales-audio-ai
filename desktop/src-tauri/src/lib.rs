@@ -615,6 +615,42 @@ fn app_log_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_data_dir(app)?.join("logs").join("app.log"))
 }
 
+fn format_log_timestamp() -> String {
+    Local::now().format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+}
+
+fn normalize_log_location(scope: &str, location: Option<&str>) -> String {
+    let raw = location.map(str::trim).filter(|value| !value.is_empty()).unwrap_or("");
+    if raw.is_empty() {
+        if scope.starts_with("frontend:") {
+            return "desktop/src".into();
+        }
+        return "desktop/src-tauri/src/lib.rs".into();
+    }
+
+    if let Some(path_start) = raw.find("desktop/src/") {
+        return raw[path_start..].to_string();
+    }
+
+    if let Some(path_start) = raw.find("desktop/src-tauri/") {
+        return raw[path_start..].to_string();
+    }
+
+    if raw.starts_with("frontend:") {
+        return "desktop/src".into();
+    }
+
+    raw.to_string()
+}
+
+fn normalize_log_scope(scope: &str) -> String {
+    if scope.starts_with("frontend:") || scope.starts_with("backend:") {
+        return scope.to_string();
+    }
+
+    format!("backend:{}", scope)
+}
+
 fn append_local_log(
     app: &AppHandle,
     level: &str,
@@ -628,22 +664,19 @@ fn append_local_log(
         fs::create_dir_all(parent).map_err(|e| format!("创建日志目录失败: {e}"))?;
     }
 
-    let location_suffix = location
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| format!("[{}]", value))
-        .unwrap_or_else(|| "[desktop/src-tauri/src/lib.rs]".into());
+    let normalized_scope = normalize_log_scope(scope);
+    let normalized_location = normalize_log_location(&normalized_scope, location);
     let payload_suffix = payload
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| format!(" | {}", value))
         .unwrap_or_default();
     let line = format!(
-        "[sales-audio-ai][{}][{}][{}]{} {}{}\n",
-        Local::now().to_rfc3339(),
+        "[sales-audio-ai][{}][{}][{}][{}] {}{}\n",
+        format_log_timestamp(),
         level,
-        scope,
-        location_suffix,
+        normalized_scope,
+        normalized_location,
         message,
         payload_suffix
     );
@@ -666,16 +699,31 @@ fn write_backend_log(
     message: &str,
     payload: Option<String>,
 ) {
+    let normalized_scope = normalize_log_scope(scope);
+    let normalized_location = normalize_log_location(&normalized_scope, Some(location));
     let payload_text = payload.as_deref();
-    let console_line = format!("[sales-audio-ai][{}][{}][{}] {}", level, scope, location, message);
+    let payload_suffix = payload_text
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!(" | {}", value))
+        .unwrap_or_default();
+    let console_line = format!(
+        "[sales-audio-ai][{}][{}][{}][{}] {}{}",
+        format_log_timestamp(),
+        level,
+        normalized_scope,
+        normalized_location,
+        message,
+        payload_suffix
+    );
     match level {
-        "error" => eprintln!("{}{}", console_line, payload_text.map(|value| format!(" | {}", value)).unwrap_or_default()),
-        "warn" => eprintln!("{}{}", console_line, payload_text.map(|value| format!(" | {}", value)).unwrap_or_default()),
-        _ => println!("{}{}", console_line, payload_text.map(|value| format!(" | {}", value)).unwrap_or_default()),
+        "error" => eprintln!("{}", console_line),
+        "warn" => eprintln!("{}", console_line),
+        _ => println!("{}", console_line),
     }
 
-    if let Err(error) = append_local_log(app, level, scope, Some(location), message, payload_text) {
-        eprintln!("[sales-audio-ai][error][logger][desktop/src-tauri/src/lib.rs] 写入本地日志失败: {}", error);
+    if let Err(error) = append_local_log(app, level, &normalized_scope, Some(&normalized_location), message, payload_text) {
+        eprintln!("[sales-audio-ai][{}][error][backend:logger][desktop/src-tauri/src/lib.rs] 写入本地日志失败 | {}", format_log_timestamp(), error);
     }
 }
 

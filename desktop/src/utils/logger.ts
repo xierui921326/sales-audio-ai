@@ -3,6 +3,36 @@ import { invoke } from '@tauri-apps/api/core';
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 const PREFIX = '[sales-audio-ai]';
+const FRONTEND_ROOT = 'desktop/src/';
+
+function formatTimestamp(date = new Date()): string {
+  const pad = (value: number, size = 2) => String(value).padStart(size, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
+}
+
+function normalizeCallerLocation(stackLine: string): string | undefined {
+  const match = stackLine.match(/(https?:\/\/[^)\s]+|\/[^)\s]+):(\d+):(\d+)/);
+  if (!match) {
+    return undefined;
+  }
+
+  const source = match[1];
+  const line = match[2];
+  const column = match[3];
+  const rootIndex = source.indexOf(FRONTEND_ROOT);
+  if (rootIndex >= 0) {
+    return `${source.slice(rootIndex)}:${line}:${column}`;
+  }
+
+  const url = new URL(source);
+  const pathname = decodeURIComponent(url.pathname);
+  const pathIndex = pathname.indexOf('/src/');
+  if (pathIndex >= 0) {
+    return `desktop${pathname.slice(pathIndex)}:${line}:${column}`;
+  }
+
+  return undefined;
+}
 
 function resolveCallerLocation(): string | undefined {
   const stack = new Error().stack;
@@ -15,18 +45,19 @@ function resolveCallerLocation(): string | undefined {
     line =>
       line &&
       !line.includes('resolveCallerLocation') &&
+      !line.includes('normalizeCallerLocation') &&
       !line.includes('writeToLocalFile') &&
       !line.includes('log (') &&
       !line.includes('log@') &&
       !line.includes('logger.ts')
   );
 
-  return callerLine;
+  return callerLine ? normalizeCallerLocation(callerLine) : undefined;
 }
 
 function print(level: LogLevel, scope: string, message: string, payload?: unknown) {
-  const timestamp = new Date().toISOString();
-  const line = `${PREFIX}[${timestamp}][${level}][${scope}] ${message}`;
+  const timestamp = formatTimestamp();
+  const line = `${PREFIX}[${timestamp}][${level}][frontend:${scope}] ${message}`;
 
   if (level === 'error') {
     console.error(line, payload ?? '');
@@ -66,7 +97,7 @@ function writeToLocalFile(level: LogLevel, scope: string, message: string, paylo
   invoke('write_log', {
     input: {
       level,
-      scope,
+      scope: `frontend:${scope}`,
       message,
       payload: stringifyPayload(payload),
       location: resolveCallerLocation(),
