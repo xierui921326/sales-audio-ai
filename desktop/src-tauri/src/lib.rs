@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs,
     io::Write,
+    panic::Location,
     path::{Path, PathBuf},
 };
 use tauri::{AppHandle, Manager};
@@ -691,16 +692,22 @@ fn append_local_log(
     Ok(())
 }
 
+fn backend_log_location(location: &'static Location<'static>) -> String {
+    format!("desktop/{}:{}", location.file(), location.line())
+}
+
+#[track_caller]
 fn write_backend_log(
     app: &AppHandle,
     level: &str,
     scope: &str,
-    location: &str,
+    _location: &str,
     message: &str,
     payload: Option<String>,
 ) {
+    let caller = Location::caller();
     let normalized_scope = normalize_log_scope(scope);
-    let normalized_location = normalize_log_location(&normalized_scope, Some(location));
+    let normalized_location = normalize_log_location(&normalized_scope, Some(&backend_log_location(caller)));
     let payload_text = payload.as_deref();
     let payload_suffix = payload_text
         .map(str::trim)
@@ -799,14 +806,14 @@ fn cleanup_legacy_files(app: &AppHandle) -> Result<Vec<String>, String> {
     Ok(removed)
 }
 
-fn remove_legacy_files_with_log(app: &AppHandle, location: &str) -> Result<(), String> {
+fn remove_legacy_files_with_log(app: &AppHandle, _location: &str) -> Result<(), String> {
     let removed = cleanup_legacy_files(app)?;
     if !removed.is_empty() {
         write_backend_log(
             app,
             "info",
             "workspace",
-            location,
+            "desktop/src-tauri/src/lib.rs::remove_legacy_files_with_log",
             "已清理遗留工作区文件",
             Some(format!("count={} files={}", removed.len(), removed.join(", "))),
         );

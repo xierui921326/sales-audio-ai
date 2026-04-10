@@ -4,6 +4,7 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 const PREFIX = '[sales-audio-ai]';
 const FRONTEND_ROOT = 'desktop/src/';
+const DEFAULT_FRONTEND_LOCATION = 'desktop/src';
 
 function formatTimestamp(date = new Date()): string {
   const pad = (value: number, size = 2) => String(value).padStart(size, '0');
@@ -47,6 +48,8 @@ function resolveCallerLocation(): string | undefined {
       !line.includes('resolveCallerLocation') &&
       !line.includes('normalizeCallerLocation') &&
       !line.includes('writeToLocalFile') &&
+      !line.includes('print(') &&
+      !line.includes('print@') &&
       !line.includes('log (') &&
       !line.includes('log@') &&
       !line.includes('logger.ts')
@@ -55,9 +58,9 @@ function resolveCallerLocation(): string | undefined {
   return callerLine ? normalizeCallerLocation(callerLine) : undefined;
 }
 
-function print(level: LogLevel, scope: string, message: string, payload?: unknown) {
+function print(level: LogLevel, scope: string, location: string, message: string, payload?: unknown) {
   const timestamp = formatTimestamp();
-  const line = `${PREFIX}[${timestamp}][${level}][frontend:${scope}] ${message}`;
+  const line = `${PREFIX}[${timestamp}][${level}][frontend:${scope}][${location}] ${message}`;
 
   if (level === 'error') {
     console.error(line, payload ?? '');
@@ -93,14 +96,14 @@ function stringifyPayload(payload?: unknown): string | undefined {
   }
 }
 
-function writeToLocalFile(level: LogLevel, scope: string, message: string, payload?: unknown) {
+function writeToLocalFile(level: LogLevel, scope: string, location: string, message: string, payload?: unknown) {
   invoke('write_log', {
     input: {
       level,
       scope: `frontend:${scope}`,
       message,
       payload: stringifyPayload(payload),
-      location: resolveCallerLocation(),
+      location,
     },
   }).catch(error => {
     console.error(`${PREFIX}[logger] 写入本地日志失败`, error);
@@ -108,8 +111,9 @@ function writeToLocalFile(level: LogLevel, scope: string, message: string, paylo
 }
 
 function log(level: LogLevel, scope: string, message: string, payload?: unknown) {
-  print(level, scope, message, payload);
-  writeToLocalFile(level, scope, message, payload);
+  const location = resolveCallerLocation() ?? DEFAULT_FRONTEND_LOCATION;
+  print(level, scope, location, message, payload);
+  writeToLocalFile(level, scope, location, message, payload);
 }
 
 export const logger = {
