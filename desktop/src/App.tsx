@@ -29,7 +29,6 @@ const DEFAULT_CONFIG: AppConfig = {
   audioDir: '',
   databasePath: '',
   configFile: '',
-  fallbackModel: 'gpt-4o-mini',
 };
 
 type GenerateDialogState = {

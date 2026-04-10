@@ -127,59 +127,27 @@ struct AppConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct PromptTemplate {
-    id: String,
-    title: String,
-    description: String,
-    system_prompt: String,
-    variables: Vec<String>,
-    updated_at: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct ScriptEntry {
-    id: String,
-    speaker: String,
-    category: String,
-    text: String,
-    tags: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct BatchTaskItem {
-    id: String,
-    title: String,
-    industry: String,
-    count: u32,
-    progress: u32,
-    status: String,
-    outputs: Vec<String>,
-    created_at: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
 struct WorkspaceData {
     config: AppConfig,
-    prompts: Vec<PromptTemplate>,
-    scripts: Vec<ScriptEntry>,
-    tasks: Vec<BatchTaskItem>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GenerateConversationInput {
-    industry: String,
     scenario: String,
-    customer_role: String,
-    tone: String,
     rounds: u32,
     supplemental_prompt: Option<String>,
     llm_endpoint_id: Option<String>,
     system_prompt: Option<String>,
-    scripts: Option<Vec<ScriptEntry>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FrontendLogInput {
+    level: String,
+    scope: String,
+    message: String,
+    payload: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -441,7 +409,7 @@ async fn request_qwen_tts_bytes(tts_config: &TtsEndpointConfig, text: &str, voic
         .map_err(|e| format!("读取千问 TTS 音频失败: {e}"))
 }
 
-async fn list_tts_voices_inner(config: &AppConfig) -> Result<Vec<SelectOption>, String> {
+async fn list_tts_voices_inner(app: &AppHandle, config: &AppConfig) -> Result<Vec<SelectOption>, String> {
     let tts_config = config
         .tts_endpoints
         .iter()
@@ -458,9 +426,12 @@ async fn list_tts_voices_inner(config: &AppConfig) -> Result<Vec<SelectOption>, 
         return Err("未配置千问 TTS Base URL".into());
     }
 
-    println!(
-        "[sales-audio-ai][tts] 开始拉取音色列表 endpoint={} provider={}",
-        tts_config.id, tts_config.provider
+    write_backend_log(
+        app,
+        "info",
+        "tts",
+        "开始拉取音色列表",
+        Some(format!("endpoint={} provider={}", tts_config.id, tts_config.provider)),
     );
 
     let response = reqwest::Client::new()
@@ -471,9 +442,12 @@ async fn list_tts_voices_inner(config: &AppConfig) -> Result<Vec<SelectOption>, 
 
     if !response.status().is_success() {
         let text = response.text().await.unwrap_or_default();
-        eprintln!(
-            "[sales-audio-ai][tts] 音色列表接口失败 endpoint={} body={}",
-            tts_config.id, text
+        write_backend_log(
+            app,
+            "error",
+            "tts",
+            "音色列表接口失败",
+            Some(format!("endpoint={} body={}", tts_config.id, text)),
         );
         return Err(format!("音色列表接口返回失败: {}", text));
     }
@@ -495,10 +469,12 @@ async fn list_tts_voices_inner(config: &AppConfig) -> Result<Vec<SelectOption>, 
         .collect::<Vec<_>>();
 
     voices.sort_by(|a, b| a.label.cmp(&b.label));
-    println!(
-        "[sales-audio-ai][tts] 音色列表拉取成功 endpoint={} count={}",
-        tts_config.id,
-        voices.len()
+    write_backend_log(
+        app,
+        "info",
+        "tts",
+        "音色列表拉取成功",
+        Some(format!("endpoint={} count={}", tts_config.id, voices.len())),
     );
     Ok(voices)
 }
@@ -622,6 +598,66 @@ fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn workspace_db_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_data_dir(app)?.join("app.db"))
+}
+
+fn app_log_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_data_dir(app)?.join("logs").join("app.log"))
+}
+
+fn append_local_log(
+    app: &AppHandle,
+    level: &str,
+    scope: &str,
+    message: &str,
+    payload: Option<&str>,
+) -> Result<(), String> {
+    let log_path = app_log_path(app)?;
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建日志目录失败: {e}"))?;
+    }
+
+    let payload_suffix = payload
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!(" | {}", value))
+        .unwrap_or_default();
+    let line = format!(
+        "[sales-audio-ai][{}][{}][{}] {}{}\n",
+        Local::now().to_rfc3339(),
+        level,
+        scope,
+        message,
+        payload_suffix
+    );
+
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|e| format!("打开日志文件失败: {e}"))?;
+    file.write_all(line.as_bytes())
+        .map_err(|e| format!("写入日志文件失败: {e}"))?;
+    Ok(())
+}
+
+fn write_backend_log(
+    app: &AppHandle,
+    level: &str,
+    scope: &str,
+    message: &str,
+    payload: Option<String>,
+) {
+    let payload_text = payload.as_deref();
+    let console_line = format!("[sales-audio-ai][{}] {}", scope, message);
+    match level {
+        "error" => eprintln!("{}{}", console_line, payload_text.map(|value| format!(" | {}", value)).unwrap_or_default()),
+        "warn" => eprintln!("{}{}", console_line, payload_text.map(|value| format!(" | {}", value)).unwrap_or_default()),
+        _ => println!("{}{}", console_line, payload_text.map(|value| format!(" | {}", value)).unwrap_or_default()),
+    }
+
+    if let Err(error) = append_local_log(app, level, scope, message, payload_text) {
+        eprintln!("[sales-audio-ai][logger] 写入本地日志失败: {}", error);
+    }
 }
 
 fn legacy_workspace_file(app: &AppHandle) -> Result<PathBuf, String> {
@@ -818,62 +854,6 @@ fn default_config(app: &AppHandle) -> Result<AppConfig, String> {
 fn default_workspace(app: &AppHandle) -> Result<WorkspaceData, String> {
     Ok(WorkspaceData {
         config: default_config(app)?,
-        prompts: vec![
-            PromptTemplate {
-                id: "p1".into(),
-                title: "SaaS 首次邀约".into(),
-                description: "适用于产品演示邀约场景".into(),
-                system_prompt: "你是一名资深销售，需要生成自然、专业、可推进下一步的销售对话。".into(),
-                variables: vec!["行业".into(), "场景".into(), "客户角色".into()],
-                updated_at: now_text(),
-            },
-            PromptTemplate {
-                id: "p2".into(),
-                title: "异议处理模板".into(),
-                description: "处理预算、时机与竞品类问题".into(),
-                system_prompt: "围绕客户异议给出共情、拆解与下一步推进话术。".into(),
-                variables: vec!["异议类型".into(), "目标动作".into()],
-                updated_at: now_text(),
-            },
-        ],
-        scripts: vec![
-            ScriptEntry {
-                id: "s1".into(),
-                speaker: "sales".into(),
-                category: "开场破冰".into(),
-                text: "张总您好，我这边想用一分钟了解一下贵司当前销售跟进流程是否已经标准化。".into(),
-                tags: vec!["开场破冰".into(), "需求挖掘".into()],
-            },
-            ScriptEntry {
-                id: "s2".into(),
-                speaker: "customer".into(),
-                category: "客户回应".into(),
-                text: "我们现在主要还是靠表格在跟，效率不高。".into(),
-                tags: vec!["现状".into()],
-            },
-        ],
-        tasks: vec![
-            BatchTaskItem {
-                id: "task-1".into(),
-                title: "SaaS 首次邀约批量生成".into(),
-                industry: "saas".into(),
-                count: 12,
-                progress: 8,
-                status: "running".into(),
-                outputs: vec!["对话文本".into(), "音频脚本".into()],
-                created_at: now_text(),
-            },
-            BatchTaskItem {
-                id: "task-2".into(),
-                title: "教育行业异议处理脚本".into(),
-                industry: "education".into(),
-                count: 6,
-                progress: 6,
-                status: "completed".into(),
-                outputs: vec!["对话文本".into(), "合并音频".into()],
-                created_at: now_text(),
-            },
-        ],
     })
 }
 
@@ -913,13 +893,17 @@ fn ensure_workspace(app: &AppHandle) -> Result<WorkspaceData, String> {
         return Ok(workspace);
     }
 
+    // 旧 workspace.json 只在首次迁移时读取；后续统一以 SQLite 为唯一来源。
     let legacy_path = legacy_workspace_file(app)?;
     if !legacy_path.exists() {
         let workspace = default_workspace(app)?;
         persist_workspace_to_db(app, &workspace)?;
-        println!(
-            "[sales-audio-ai][workspace] 首次创建 SQLite 工作区 db={}",
-            workspace_db_path(app)?.to_string_lossy()
+        write_backend_log(
+            app,
+            "info",
+            "workspace",
+            "首次创建 SQLite 工作区",
+            Some(format!("db={}", workspace_db_path(app)?.to_string_lossy())),
         );
         return Ok(workspace);
     }
@@ -959,10 +943,16 @@ fn ensure_workspace(app: &AppHandle) -> Result<WorkspaceData, String> {
     normalize_config_paths(app, &mut workspace.config)?;
     let normalized = serde_json::to_value(&workspace).map_err(|e| format!("序列化工作区失败: {e}"))?;
     if normalized != value || modified {
-        println!(
-            "[sales-audio-ai][workspace] 历史工作区已迁移到 SQLite legacy={} db={}",
-            legacy_path.to_string_lossy(),
-            workspace_db_path(app)?.to_string_lossy()
+        write_backend_log(
+            app,
+            "info",
+            "workspace",
+            "历史工作区已迁移到 SQLite",
+            Some(format!(
+                "legacy={} db={}",
+                legacy_path.to_string_lossy(),
+                workspace_db_path(app)?.to_string_lossy()
+            )),
         );
     }
     persist_workspace_to_db(app, &workspace)?;
@@ -1101,7 +1091,7 @@ fn parse_llm_transcript_rows(content: &str) -> Result<Vec<TranscriptSegment>, St
         .collect()
 }
 
-async fn call_remote_llm(config: &AppConfig, input: &GenerateConversationInput) -> Result<GenerateConversationOutput, String> {
+async fn call_remote_llm(app: &AppHandle, config: &AppConfig, input: &GenerateConversationInput) -> Result<GenerateConversationOutput, String> {
     // 生成链路优先使用本次请求显式传入的 llm_endpoint_id；未传时才回退到默认配置。
     let requested_endpoint_id = input.llm_endpoint_id.as_deref().map(str::trim).filter(|id| !id.is_empty());
     let llm_config = if let Some(endpoint_id) = requested_endpoint_id {
@@ -1149,27 +1139,13 @@ async fn call_remote_llm(config: &AppConfig, input: &GenerateConversationInput) 
         "你是一名资深销售教练。请根据输入生成销售与客户的多轮中文对话。严格返回 JSON 数组，不要额外解释。数组元素格式：{\"speaker\":\"sales|customer\",\"text\":\"...\"}；如果你的模型习惯输出 role/content，也必须确保 role 只使用 sales 或 customer。".into()
     });
 
-    let scripts_hint = input
-        .scripts
-        .as_ref()
-        .map(|rows| {
-            let joined = rows
-                .iter()
-                .take(50)
-                .map(|s| format!("- {}: {}", s.speaker, s.text))
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!("\n可参考话术：\n{}\n", joined)
-        })
-        .unwrap_or_default();
-
     let supplemental_hint = supplemental_prompt
         .map(|value| format!("\n补充要求：{}", value))
         .unwrap_or_default();
 
     let user_prompt = format!(
-        "对话场景：{}\n轮数：{}{}{}\n请严格输出 JSON 数组，每轮包含 sales 和 customer 两条发言，内容要自然、口语化，并围绕场景推进到明确的下一步。",
-        scenario, input.rounds, supplemental_hint, scripts_hint
+        "对话场景：{}\n轮数：{}{}\n请严格输出 JSON 数组，每轮包含 sales 和 customer 两条发言，内容要自然、口语化，并围绕场景推进到明确的下一步。",
+        scenario, input.rounds, supplemental_hint
     );
 
     let request = OpenAiRequest {
@@ -1187,12 +1163,19 @@ async fn call_remote_llm(config: &AppConfig, input: &GenerateConversationInput) 
         temperature: 0.7,
     };
 
-    println!(
-        "[sales-audio-ai][llm] 开始请求远程模型 endpoint={} model={} scenario_len={} rounds={}",
-        llm_config.id,
-        llm_config.model,
-        scenario.chars().count(),
-        input.rounds
+    // 这里统一把控制台日志和本地文件日志写在一起，避免前后端日志分散难排查。
+    write_backend_log(
+        app,
+        "info",
+        "llm",
+        "开始请求远程模型",
+        Some(format!(
+            "endpoint={} model={} scenario_len={} rounds={}",
+            llm_config.id,
+            llm_config.model,
+            scenario.chars().count(),
+            input.rounds
+        )),
     );
 
     let client = reqwest::Client::new();
@@ -1208,9 +1191,12 @@ async fn call_remote_llm(config: &AppConfig, input: &GenerateConversationInput) 
     let status = response.status();
     if !status.is_success() {
         let text = response.text().await.unwrap_or_default();
-        eprintln!(
-            "[sales-audio-ai][llm] 远程模型返回失败 endpoint={} status={} body={}",
-            llm_config.id, status, text
+        write_backend_log(
+            app,
+            "error",
+            "llm",
+            "远程模型返回失败",
+            Some(format!("endpoint={} status={} body={}", llm_config.id, status, text)),
         );
         return Err(format!("远程模型返回失败: {}", text));
     }
@@ -1221,18 +1207,26 @@ async fn call_remote_llm(config: &AppConfig, input: &GenerateConversationInput) 
         .map_err(|e| format!("读取远程模型响应失败: {e}"))?;
     let content = extract_llm_response_content(&response_text)?;
 
-    println!(
-        "[sales-audio-ai][llm] 收到模型原始内容 endpoint={} preview={}",
-        llm_config.id,
-        content.chars().take(180).collect::<String>()
+    write_backend_log(
+        app,
+        "info",
+        "llm",
+        "收到模型原始内容",
+        Some(format!(
+            "endpoint={} preview={}",
+            llm_config.id,
+            content.chars().take(180).collect::<String>()
+        )),
     );
 
     let transcript = parse_llm_transcript_rows(&content)?;
 
-    println!(
-        "[sales-audio-ai][llm] 对话解析成功 endpoint={} rows={}",
-        llm_config.id,
-        transcript.len()
+    write_backend_log(
+        app,
+        "info",
+        "llm",
+        "对话解析成功",
+        Some(format!("endpoint={} rows={}", llm_config.id, transcript.len())),
     );
 
     Ok(GenerateConversationOutput {
@@ -1382,24 +1376,42 @@ async fn list_llm_models(config: AppConfig) -> Result<Vec<SelectOption>, String>
 }
 
 #[tauri::command]
-async fn list_tts_voices(config: AppConfig) -> Result<Vec<SelectOption>, String> {
-    list_tts_voices_inner(&config).await
+async fn list_tts_voices(app: AppHandle, config: AppConfig) -> Result<Vec<SelectOption>, String> {
+    list_tts_voices_inner(&app, &config).await
+}
+
+#[tauri::command]
+fn write_log(app: AppHandle, input: FrontendLogInput) -> Result<(), String> {
+    write_backend_log(
+        &app,
+        input.level.trim(),
+        input.scope.trim(),
+        input.message.trim(),
+        input.payload,
+    );
+    Ok(())
 }
 
 #[tauri::command]
 fn load_workspace(app: AppHandle) -> Result<WorkspaceData, String> {
-    println!("[sales-audio-ai][workspace] 收到 load_workspace 请求");
+    write_backend_log(&app, "info", "workspace", "收到 load_workspace 请求", None);
     ensure_workspace(&app)
 }
 
 #[tauri::command]
 fn save_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, String> {
-    println!(
-        "[sales-audio-ai][workspace] 收到 save_config 请求 llm_count={} tts_count={} active_llm={} active_tts={}",
-        config.llm_endpoints.len(),
-        config.tts_endpoints.len(),
-        config.active_llm_id,
-        config.active_tts_id
+    write_backend_log(
+        &app,
+        "info",
+        "workspace",
+        "收到 save_config 请求",
+        Some(format!(
+            "llm_count={} tts_count={} active_llm={} active_tts={}",
+            config.llm_endpoints.len(),
+            config.tts_endpoints.len(),
+            config.active_llm_id,
+            config.active_tts_id
+        )),
     );
     let mut workspace = ensure_workspace(&app)?;
     workspace.config = config.clone();
@@ -1408,46 +1420,34 @@ fn save_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, String> {
 }
 
 #[tauri::command]
-fn save_prompts(app: AppHandle, prompts: Vec<PromptTemplate>) -> Result<Vec<PromptTemplate>, String> {
-    let mut workspace = ensure_workspace(&app)?;
-    workspace.prompts = prompts.clone();
-    save_workspace(&app, &workspace)?;
-    Ok(prompts)
-}
-
-#[tauri::command]
-fn save_scripts(app: AppHandle, scripts: Vec<ScriptEntry>) -> Result<Vec<ScriptEntry>, String> {
-    let mut workspace = ensure_workspace(&app)?;
-    workspace.scripts = scripts.clone();
-    save_workspace(&app, &workspace)?;
-    Ok(scripts)
-}
-
-#[tauri::command]
-fn save_tasks(app: AppHandle, tasks: Vec<BatchTaskItem>) -> Result<Vec<BatchTaskItem>, String> {
-    let mut workspace = ensure_workspace(&app)?;
-    workspace.tasks = tasks.clone();
-    save_workspace(&app, &workspace)?;
-    Ok(tasks)
-}
-
-#[tauri::command]
 async fn generate_conversation(app: AppHandle, input: GenerateConversationInput) -> Result<GenerateConversationOutput, String> {
-    println!(
-        "[sales-audio-ai][generate] 收到 generate_conversation 请求 rounds={} llm_endpoint_id={}",
-        input.rounds,
-        input.llm_endpoint_id.clone().unwrap_or_default()
+    write_backend_log(
+        &app,
+        "info",
+        "generate",
+        "收到 generate_conversation 请求",
+        Some(format!(
+            "rounds={} llm_endpoint_id={}",
+            input.rounds,
+            input.llm_endpoint_id.clone().unwrap_or_default()
+        )),
     );
     let workspace = ensure_workspace(&app)?;
-    call_remote_llm(&workspace.config, &input).await
+    call_remote_llm(&app, &workspace.config, &input).await
 }
 
 #[tauri::command]
 async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<GenerateAudioOutput, String> {
-    println!(
-        "[sales-audio-ai][audio] 收到 generate_audio 请求 transcript_size={} audio_dir={}",
-        input.transcript.len(),
-        input.audio_dir
+    write_backend_log(
+        &app,
+        "info",
+        "audio",
+        "收到 generate_audio 请求",
+        Some(format!(
+            "transcript_size={} audio_dir={}",
+            input.transcript.len(),
+            input.audio_dir
+        )),
     );
     let workspace = ensure_workspace(&app)?;
     let config = workspace.config;
@@ -1478,19 +1478,27 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
                 fs::write(&segment_path, &bytes).map_err(|e| format!("写入音频片段失败: {e}"))?;
                 merged_chunks.push(bytes);
                 used_real_tts = true;
-                println!(
-                    "[sales-audio-ai][audio] 音频片段合成成功 index={} provider={} ext={} path={}",
-                    index + 1,
-                    tts_config.provider,
-                    segment_extension,
-                    segment_path.to_string_lossy()
+                write_backend_log(
+                    &app,
+                    "info",
+                    "audio",
+                    "音频片段合成成功",
+                    Some(format!(
+                        "index={} provider={} ext={} path={}",
+                        index + 1,
+                        tts_config.provider,
+                        segment_extension,
+                        segment_path.to_string_lossy()
+                    )),
                 );
             }
             Err(error) => {
-                eprintln!(
-                    "[sales-audio-ai][audio] 在线 TTS 失败，终止合并 index={} error={}",
-                    index + 1,
-                    error
+                write_backend_log(
+                    &app,
+                    "error",
+                    "audio",
+                    "在线 TTS 失败，终止合并",
+                    Some(format!("index={} error={}", index + 1, error)),
                 );
                 return Err(error);
             }
@@ -1501,6 +1509,7 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
         return Err("未生成任何可用音频片段，请检查当前 TTS 配置后重试。".into());
     }
 
+    // 合并文件名带 batch_id，避免重复生成时覆盖历史音频。
     let merged_name = format!("merged_{}.wav", batch_id);
     let merged_path = output_dir.join(&merged_name);
     let merged_text = input
@@ -1512,10 +1521,12 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
 
     merge_audio_segments_to_wav(&merged_path, &merged_chunks)?;
 
-    println!(
-        "[sales-audio-ai][audio] 合并音频输出完成 provider={} ext=wav path={}",
-        tts_config.provider,
-        merged_path.to_string_lossy()
+    write_backend_log(
+        &app,
+        "info",
+        "audio",
+        "合并音频输出完成",
+        Some(format!("provider={} ext=wav path={}", tts_config.provider, merged_path.to_string_lossy())),
     );
 
     let merged_file = AudioFileItem {
@@ -1585,7 +1596,7 @@ async fn pick_path(app: AppHandle, kind: String) -> Result<String, String> {
 
 #[tauri::command]
 fn get_health_status(app: AppHandle) -> Result<HealthStatus, String> {
-    println!("[sales-audio-ai][health] 收到 get_health_status 请求");
+    write_backend_log(&app, "info", "health", "收到 get_health_status 请求", None);
     let workspace = ensure_workspace(&app)?;
     let audio_dir = ensure_output_dir(&app_data_dir(&app)?, &workspace.config.audio_dir)?;
     let config_file = workspace_db_path(&app)?;
@@ -1632,11 +1643,9 @@ fn get_health_status(app: AppHandle) -> Result<HealthStatus, String> {
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            write_log,
             load_workspace,
             save_config,
-            save_prompts,
-            save_scripts,
-            save_tasks,
             list_llm_models,
             list_tts_voices,
             list_audio_files,

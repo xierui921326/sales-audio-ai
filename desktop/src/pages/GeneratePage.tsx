@@ -13,10 +13,7 @@ interface GeneratePageProps {
 }
 
 const DEFAULT_FORM: GenerateConversationInput = {
-  industry: '',
   scenario: '金融保险行业，续保提醒场景，客户比较犹豫，担心价格上涨，希望销售用专业亲和的方式推进到下一次沟通。',
-  customerRole: '',
-  tone: '',
   rounds: 6,
   supplementalPrompt: '',
 };
@@ -85,9 +82,6 @@ export default function GeneratePage({
 
     onGenerate({
       ...form,
-      industry: '',
-      customerRole: '',
-      tone: '',
       scenario: form.scenario.trim(),
       supplementalPrompt: form.supplementalPrompt?.trim() ?? '',
       llmEndpointId: selectedLlmId,

@@ -20,16 +20,6 @@ export interface SelectOption {
     badge?: string;
 }
 
-export interface ConversationParameter {
-    id: string;
-    label: string;
-    type: 'select' | 'textarea' | 'number';
-    value: string;
-    options?: SelectOption[];
-    helper?: string;
-    placeholder?: string;
-}
-
 export interface TaskMetaItem {
     label: string;
     value: string;
@@ -51,16 +41,6 @@ export interface StatusCheckItem {
     status: 'ready' | 'connected' | 'warning';
 }
 
-export interface ConfigField {
-    id: string;
-    label: string;
-    value: string;
-    placeholder?: string;
-    helper?: string;
-    masked?: boolean;
-    actionLabel?: string;
-}
-
 export interface ProviderOption extends SelectOption {
     description?: string;
 }
@@ -69,13 +49,6 @@ export interface ModelOption {
     label: string;
     value: string;
     tag?: string;
-}
-
-export interface VoiceRoleOption {
-    label: string;
-    value: string;
-    accent?: string;
-    gender?: string;
 }
 
 export interface LlmEndpointConfig {
@@ -104,7 +77,6 @@ export interface AppConfig {
     activeTtsId: string;
     ttsEndpoints: TtsEndpointConfig[];
 
-    fallbackModel: string;
     audioDir: string;
     databasePath: string;
     configFile: string;
@@ -122,51 +94,16 @@ export interface AppConfig {
     customerVoice?: string;
 }
 
-export interface PromptTemplate {
-    id: string;
-    title: string;
-    description: string;
-    systemPrompt: string;
-    variables: string[];
-    updatedAt: string;
-}
-
-export interface ScriptEntry {
-    id: string;
-    speaker: 'sales' | 'customer';
-    category: string;
-    text: string;
-    tags: string[];
-}
-
-export interface BatchTaskItem {
-    id: string;
-    title: string;
-    industry: string;
-    count: number;
-    progress: number;
-    status: 'pending' | 'running' | 'completed';
-    outputs: string[];
-    createdAt: string;
-}
-
 export interface WorkspaceData {
     config: AppConfig;
-    prompts: PromptTemplate[];
-    scripts: ScriptEntry[];
-    tasks: BatchTaskItem[];
 }
 
 export interface GenerateConversationInput {
-    industry: string;
     scenario: string;
-    customerRole: string;
-    tone: string;
     rounds: number;
     supplementalPrompt?: string;
     llmEndpointId?: string;
     systemPrompt?: string;
-    scripts?: ScriptEntry[];
 }
 
 export interface GenerateConversationOutput {
