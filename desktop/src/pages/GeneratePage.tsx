@@ -223,7 +223,7 @@ export default function GeneratePage({
         </div>
 
         <div className="card-base conversation-layout generate-transcript-card">
-          <TranscriptPanel transcript={transcript} recordingState={recordingState} streamingText={streamingText} />
+          <TranscriptPanel transcript={transcript} recordingState={recordingState} />
         </div>
       </div>
     </div>

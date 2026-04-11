@@ -4,18 +4,16 @@ import { TranscriptSegment, RecordingState } from '../types';
 interface Props {
     transcript: TranscriptSegment[];
     recordingState: RecordingState;
-    streamingText?: string;
 }
 
-export default function TranscriptPanel({ transcript, recordingState, streamingText = '' }: Props) {
+export default function TranscriptPanel({ transcript, recordingState }: Props) {
     const bottomRef = useRef<HTMLDivElement>(null);
 
     // 新对话进来后自动滚到底部，避免用户每次生成后还要手动下拉查看最新内容。
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [transcript, streamingText]);
+    }, [transcript]);
 
-    const hasStreamingText = streamingText.trim().length > 0;
     const isEmpty = transcript.length === 0;
     const isProcessing = recordingState === 'processing';
 
@@ -30,16 +28,15 @@ export default function TranscriptPanel({ transcript, recordingState, streamingT
             </div>
 
             <div className="transcript-panel__content">
-                {isProcessing && isEmpty && !hasStreamingText ? (
+                {isProcessing && isEmpty ? (
                     <ProcessingPlaceholder />
-                ) : isEmpty && !hasStreamingText ? (
+                ) : isEmpty ? (
                     <EmptyPlaceholder recordingState={recordingState} />
                 ) : (
                     <>
                         {transcript.map(seg => (
                             <SegmentBubble key={seg.id} segment={seg} />
                         ))}
-                        {hasStreamingText ? <StreamingBubble text={streamingText} dimmed={transcript.length > 0} /> : null}
                         {recordingState === 'recording' && <TypingIndicator />}
                     </>
                 )}
@@ -53,6 +50,8 @@ function SegmentBubble({ segment }: { segment: TranscriptSegment }) {
     const isSales = segment.speaker === 'sales';
     const label = isSales ? '销售' : '客户';
     const speakerColor = isSales ? 'var(--sales-color)' : 'var(--customer-color)';
+    const partialClassName = segment.isPartial ? ' is-partial' : '';
+    const isStreaming = segment.isStreaming ?? false;
 
     const formatTime = (s: number): string => {
         const m = Math.floor(s / 60).toString().padStart(2, '0');
@@ -75,36 +74,19 @@ function SegmentBubble({ segment }: { segment: TranscriptSegment }) {
     };
 
     return (
-        <div className={`transcript-segment ${isSales ? 'is-sales' : 'is-customer'}`}>
-            <div className="transcript-segment__meta-row">
-                <div className="transcript-segment__avatar" style={{ background: speakerColor }}>
+        <div className={`transcript-segment ${isSales ? 'is-sales' : 'is-customer'}${partialClassName}`}>
+            <div className={`transcript-segment__meta-row${segment.isPartial ? ' transcript-segment__meta-row--partial' : ''}`}>
+                <div className={`transcript-segment__avatar${segment.isPartial ? ' transcript-segment__avatar--partial' : ''}`} style={{ background: speakerColor }}>
                     {label[0]}
                 </div>
-                <span className="transcript-segment__meta-text">
+                <span className={`transcript-segment__meta-text${segment.isPartial ? ' transcript-segment__meta-text--partial' : ''}`}>
                     {label} · {formatTime(segment.startTime)}
                 </span>
+                {segment.isPartial && isStreaming ? <span className="transcript-segment__status">输入中</span> : null}
             </div>
 
-            <div className="transcript-bubble">
+            <div className={`transcript-bubble${segment.isPartial ? ' transcript-bubble--partial' : ''}${isStreaming ? ' is-streaming' : ''}`} aria-live={isStreaming ? 'polite' : undefined}>
                 {renderText(segment.text, segment.keywords)}
-            </div>
-        </div>
-    );
-}
-
-function StreamingBubble({ text, dimmed = false }: { text: string; dimmed?: boolean }) {
-    return (
-        <div className={`transcript-streaming transcript-segment is-sales${dimmed ? ' is-dimmed' : ''}`} aria-live="polite">
-            <div className="transcript-segment__meta-row transcript-streaming__meta-row">
-                <div className="transcript-segment__avatar transcript-streaming__avatar" style={{ background: 'var(--sales-color)' }}>
-                    销
-                </div>
-                <span className="transcript-segment__meta-text transcript-streaming__meta-text">销售</span>
-                <span className="transcript-streaming__status">输入中</span>
-            </div>
-            <div className="transcript-bubble transcript-streaming__bubble">
-                <span className="transcript-streaming__text">{text}</span>
-                <span className="transcript-streaming__cursor" aria-hidden="true" />
             </div>
         </div>
     );

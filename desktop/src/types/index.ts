@@ -13,6 +13,7 @@ export interface TranscriptSegment {
     endTime: number;
     keywords?: string[];
     isPartial?: boolean;
+    isStreaming?: boolean;
 }
 
 export interface SelectOption {

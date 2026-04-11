@@ -271,47 +271,42 @@ textarea.field-control {
   border-radius: 3px;
 }
 
-.transcript-streaming {
-  width: fit-content;
-  max-width: min(80%, 680px);
-  gap: 4px;
-  margin-bottom: 16px;
+.transcript-segment.is-partial {
   transition: opacity 0.15s ease;
 }
 
-.transcript-streaming.is-dimmed {
-  opacity: 0.58;
-}
-
-.transcript-streaming__meta-row {
-  gap: 5px;
+.transcript-segment__meta-row--partial {
+  gap: 4px;
   margin-bottom: 1px;
 }
 
-.transcript-streaming__avatar {
+.transcript-segment__avatar--partial {
   width: 16px;
   height: 16px;
   font-size: 8px;
-  opacity: 0.64;
+  opacity: 0.56;
 }
 
-.transcript-streaming__meta-text {
+.transcript-segment__meta-text--partial {
   font-size: 10px;
-  color: var(--text-muted);
   letter-spacing: 0.01em;
-  opacity: 0.5;
+  opacity: 0.46;
 }
 
-.transcript-streaming__status {
+.transcript-segment__status {
   font-size: 10px;
   line-height: 1;
   color: var(--text-muted);
-  opacity: 0.4;
+  opacity: 0.34;
 }
 
-.transcript-streaming__bubble {
+.transcript-segment.is-customer .transcript-segment__status {
+  order: -1;
+}
+
+.transcript-bubble--partial {
   width: fit-content;
-  max-width: 100%;
+  max-width: min(80%, 680px);
   padding-right: 10px;
   display: inline-flex;
   align-items: flex-end;
@@ -320,40 +315,425 @@ textarea.field-control {
   word-break: break-word;
   background: rgba(255, 255, 255, 0.68);
   border-color: rgba(31, 42, 68, 0.06);
-  border-radius: 4px 12px 12px 12px;
   box-shadow: 0 1px 2px rgba(31, 42, 68, 0.03);
+}
+
+.transcript-segment.is-customer .transcript-bubble--partial {
+  background: rgba(231, 248, 237, 0.9);
+  border-color: rgba(52, 199, 122, 0.22);
+}
+
+.transcript-segment.is-partial .transcript-segment__status,
+.transcript-segment.is-partial .transcript-segment__avatar--partial {
+  transition: opacity 0.15s ease;
+}
+
+.transcript-segment.is-partial.is-customer .transcript-segment__meta-row--partial {
+  flex-direction: row-reverse;
+}
+
+.transcript-segment.is-partial.is-customer .transcript-segment__meta-text--partial {
+  text-align: right;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial.is-streaming {
   backdrop-filter: blur(2px);
 }
 
-.transcript-streaming__text {
-  min-width: 0;
+.transcript-segment.is-partial .transcript-bubble--partial.is-streaming {
+  transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease, transform 0.18s ease;
 }
 
-.transcript-streaming__cursor {
-  width: 2px;
-  height: 14px;
-  margin-bottom: 4px;
-  flex-shrink: 0;
-  border-radius: 999px;
-  background: var(--text-secondary);
-  opacity: 0.5;
-  animation: transcript-streaming-cursor-blink 1s steps(1, end) infinite;
+.transcript-segment.is-partial .transcript-bubble--partial.is-streaming {
+  opacity: 0.98;
 }
 
-.transcript-streaming.is-dimmed .transcript-streaming__bubble {
-  box-shadow: none;
-  background: rgba(255, 255, 255, 0.5);
+.transcript-segment.is-partial .transcript-bubble--partial.is-streaming:empty {
+  opacity: 0.92;
 }
 
-.transcript-streaming.is-dimmed .transcript-streaming__meta-text,
-.transcript-streaming.is-dimmed .transcript-streaming__status,
-.transcript-streaming.is-dimmed .transcript-streaming__avatar,
-.transcript-streaming.is-dimmed .transcript-streaming__cursor {
-  opacity: 0.36;
+.transcript-segment.is-partial .transcript-bubble--partial.is-streaming:not(:empty) {
+  transform: translateY(0);
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  transform: translateY(0);
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial,
+.transcript-segment.is-partial .transcript-segment__meta-row--partial {
+  animation: none;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial > * {
+  transition: opacity 0.18s ease;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial.is-streaming {
+  will-change: contents;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial.is-streaming:hover {
+  box-shadow: 0 1px 2px rgba(31, 42, 68, 0.03);
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial.is-streaming .transcript-bubble__mark {
+  opacity: 0.94;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .transcript-streaming__cursor {
+  .transcript-segment.is-partial .transcript-bubble--partial.is-streaming,
+  .transcript-segment.is-partial .transcript-bubble--partial > * {
+    transition: none;
+  }
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-text--partial,
+.transcript-segment.is-partial .transcript-segment__status {
+  color: var(--text-muted);
+}
+
+.transcript-segment.is-partial .transcript-segment__status {
+  letter-spacing: 0.02em;
+}
+
+.transcript-segment.is-partial.is-customer .transcript-segment__status {
+  opacity: 0.28;
+}
+
+.transcript-segment.is-partial.is-sales .transcript-segment__status {
+  opacity: 0.32;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  min-width: 40px;
+}
+
+.transcript-segment.is-partial .transcript-segment__avatar--partial {
+  flex-shrink: 0;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial,
+.transcript-segment.is-partial .transcript-segment__meta-row--partial {
+  max-width: 100%;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  margin-bottom: 0;
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-row--partial {
+  min-height: 16px;
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-text--partial,
+.transcript-segment.is-partial .transcript-segment__status {
+  white-space: nowrap;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial:hover {
+  box-shadow: 0 1px 2px rgba(31, 42, 68, 0.03);
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-row--partial:hover .transcript-segment__status {
+  opacity: 0.38;
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-row--partial:hover .transcript-segment__avatar--partial {
+  opacity: 0.62;
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-row--partial:hover .transcript-segment__meta-text--partial {
+  opacity: 0.52;
+}
+
+.transcript-segment.is-partial .transcript-bubble__cursor {
+  align-self: flex-end;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  backdrop-filter: blur(2px);
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial,
+.transcript-segment.is-partial .transcript-segment__meta-row--partial {
+  width: fit-content;
+}
+
+.transcript-segment.is-partial.is-customer {
+  align-items: flex-end;
+}
+
+.transcript-segment.is-partial.is-sales {
+  align-items: flex-start;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial,
+.transcript-segment.is-partial .transcript-segment__meta-row--partial {
+  pointer-events: none;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  user-select: text;
+}
+
+.transcript-segment.is-partial .transcript-segment__status {
+  user-select: none;
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-text--partial {
+  user-select: none;
+}
+
+.transcript-segment.is-partial .transcript-segment__avatar--partial {
+  user-select: none;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial,
+.transcript-segment.is-partial .transcript-segment__meta-row--partial {
+  cursor: default;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  opacity: 0.96;
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-row--partial {
+  opacity: 0.88;
+}
+
+.transcript-segment.is-partial .transcript-bubble__cursor {
+  animation: transcript-streaming-cursor-blink 1s steps(1, end) infinite;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial mark {
+  vertical-align: baseline;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial .transcript-bubble__mark {
+  opacity: 0.92;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  overflow-wrap: anywhere;
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-row--partial {
+  overflow: hidden;
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-text--partial {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.transcript-segment.is-partial .transcript-segment__status {
+  flex-shrink: 0;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  margin-right: 0;
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-row--partial {
+  margin-right: 0;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  will-change: contents;
+}
+
+.transcript-segment.is-partial .transcript-bubble__cursor {
+  will-change: opacity;
+}
+
+.transcript-segment.is-partial .transcript-segment__status {
+  will-change: opacity;
+}
+
+.transcript-segment.is-partial .transcript-segment__avatar--partial {
+  will-change: opacity;
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-text--partial {
+  will-change: opacity;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  contain: layout style;
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-row--partial {
+  contain: layout style;
+}
+
+.transcript-segment.is-partial .transcript-bubble__cursor {
+  contain: paint;
+}
+
+.transcript-segment.is-partial .transcript-segment__status {
+  contain: paint;
+}
+
+.transcript-segment.is-partial .transcript-segment__avatar--partial {
+  contain: paint;
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-text--partial {
+  contain: paint;
+}
+
+.transcript-segment.is-partial {
+  contain: layout style;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  isolation: isolate;
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-row--partial {
+  isolation: isolate;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial,
+.transcript-segment.is-partial .transcript-segment__meta-row--partial {
+  transform: translateZ(0);
+}
+
+.transcript-segment.is-partial .transcript-bubble__cursor {
+  transform: translateZ(0);
+}
+
+.transcript-segment.is-partial .transcript-segment__status,
+.transcript-segment.is-partial .transcript-segment__avatar--partial,
+.transcript-segment.is-partial .transcript-segment__meta-text--partial {
+  transform: translateZ(0);
+}
+
+.transcript-segment.is-partial {
+  backface-visibility: hidden;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial,
+.transcript-segment.is-partial .transcript-segment__meta-row--partial,
+.transcript-segment.is-partial .transcript-bubble__cursor,
+.transcript-segment.is-partial .transcript-segment__status,
+.transcript-segment.is-partial .transcript-segment__avatar--partial,
+.transcript-segment.is-partial .transcript-segment__meta-text--partial {
+  backface-visibility: hidden;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  -webkit-font-smoothing: antialiased;
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-text--partial,
+.transcript-segment.is-partial .transcript-segment__status {
+  -webkit-font-smoothing: antialiased;
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-row--partial {
+  text-rendering: optimizeLegibility;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  text-rendering: optimizeLegibility;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-text--partial,
+.transcript-segment.is-partial .transcript-segment__status {
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  position: relative;
+}
+
+.transcript-segment.is-partial .transcript-bubble__cursor {
+  position: relative;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial,
+.transcript-segment.is-partial .transcript-segment__meta-row--partial {
+  z-index: 0;
+}
+
+.transcript-segment.is-partial .transcript-bubble__cursor {
+  z-index: 1;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial,
+.transcript-segment.is-partial .transcript-segment__meta-row--partial,
+.transcript-segment.is-partial .transcript-bubble__cursor,
+.transcript-segment.is-partial .transcript-segment__status,
+.transcript-segment.is-partial .transcript-segment__avatar--partial,
+.transcript-segment.is-partial .transcript-segment__meta-text--partial {
+  box-sizing: border-box;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  min-height: 40px;
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-row--partial {
+  min-width: 0;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  min-width: 0;
+}
+
+.transcript-segment.is-partial .transcript-bubble__cursor {
+  margin-left: 1px;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  padding-bottom: 10px;
+}
+
+.transcript-segment.is-partial .transcript-bubble__cursor {
+  margin-bottom: 3px;
+}
+
+.transcript-segment.is-partial .transcript-segment__status {
+  margin-top: 1px;
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-row--partial {
+  align-items: center;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  align-items: flex-end;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  justify-content: flex-start;
+}
+
+.transcript-segment.is-partial.is-customer .transcript-bubble--partial {
+  justify-content: flex-end;
+}
+
+.transcript-segment.is-partial .transcript-bubble--partial {
+  line-height: 1.6;
+}
+
+.transcript-segment.is-partial .transcript-segment__meta-text--partial,
+.transcript-segment.is-partial .transcript-segment__status {
+  line-height: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transcript-bubble__cursor {
     animation: none;
   }
 }

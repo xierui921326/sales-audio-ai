@@ -31,7 +31,6 @@ import {
   CONVERSATION_FAILED_EVENT,
 } from './types';
 
-// Constants & Defaults
 const DEFAULT_CONFIG: AppConfig = {
   activeLlmId: '',
   llmEndpoints: [],
@@ -60,18 +59,115 @@ function upsertTranscriptSegment(current: TranscriptSegment[], incoming: Transcr
   return next;
 }
 
+function decodeStreamingJsonText(value: string): string {
+  return value
+    .replace(/\\u([\da-fA-F]{4})/g, (_, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\r')
+    .replace(/\\t/g, '\t')
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, '\\');
+}
+
+function extractFallbackSegments(streamingText: string): TranscriptSegment[] {
+  const speakerMatches = [...streamingText.matchAll(/"speaker"\s*:\s*"(sales|customer)"/g)];
+  if (speakerMatches.length === 0) {
+    return [];
+  }
+
+  const fallbackSegments: TranscriptSegment[] = [];
+
+  for (let index = 0; index < speakerMatches.length; index += 1) {
+    const speakerMatch = speakerMatches[index];
+    if (speakerMatch.index === undefined) {
+      continue;
+    }
+
+    const speaker = speakerMatch[1] as TranscriptSegment['speaker'];
+    const textSearchStart = speakerMatch.index + speakerMatch[0].length;
+    const nextSpeakerIndex = speakerMatches[index + 1]?.index ?? streamingText.length;
+    const textFieldMatch = /"text"\s*:\s*"/.exec(streamingText.slice(textSearchStart, nextSpeakerIndex));
+    if (!textFieldMatch || textFieldMatch.index === undefined) {
+      continue;
+    }
+
+    const rawTextStart = textSearchStart + textFieldMatch.index + textFieldMatch[0].length;
+    let cursor = rawTextStart;
+    let escaped = false;
+    let rawText = '';
+
+    while (cursor < streamingText.length) {
+      const char = streamingText[cursor];
+      if (escaped) {
+        rawText += `\\${char}`;
+        escaped = false;
+        cursor += 1;
+        continue;
+      }
+      if (char === '\\') {
+        escaped = true;
+        cursor += 1;
+        continue;
+      }
+      if (char === '"') {
+        break;
+      }
+      rawText += char;
+      cursor += 1;
+    }
+
+    const text = decodeStreamingJsonText(rawText).trim();
+    if (!text) {
+      continue;
+    }
+
+    fallbackSegments.push({
+      id: `fallback-${index}`,
+      speaker,
+      text,
+      startTime: index,
+      endTime: index,
+      isPartial: true,
+    });
+  }
+
+  return fallbackSegments;
+}
+
+function buildDisplayTranscript(transcript: TranscriptSegment[], streamingText: string): TranscriptSegment[] {
+  const fallbackSegments = extractFallbackSegments(streamingText);
+  const transcriptWithState = transcript.map((segment, index) => ({
+    ...segment,
+    isStreaming: segment.isPartial ? index === transcript.length - 1 : false,
+  }));
+
+  if (fallbackSegments.length === 0) {
+    return transcriptWithState;
+  }
+
+  const merged = [...transcriptWithState];
+  for (let index = transcript.length; index < fallbackSegments.length; index += 1) {
+    merged.push({
+      ...fallbackSegments[index],
+      isStreaming: index === fallbackSegments.length - 1,
+    });
+  }
+
+  return merged;
+}
+
 type GenerateDialogState = {
   title: string;
   text: string;
   tone: 'error' | 'info' | 'success';
 } | null;
 
-// Main App Component
 export default function App() {
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [activeNav, setActiveNav] = useState<NavigationItemId>('generate');
   const [transcript, setTranscript] = useState<TranscriptSegment[]>([]);
   const [streamingText, setStreamingText] = useState('');
+  const [displayStreamingText, setDisplayStreamingText] = useState('');
   const [busy, setBusy] = useState<GenerateBusyState>({
     generatingConversation: false,
     generatingAudio: false,
@@ -86,6 +182,31 @@ export default function App() {
   const audioObjectUrlRef = useRef<string | null>(null);
   const generateRequestIdRef = useRef<string | null>(null);
   const generateListenersRef = useRef<UnlistenFn[]>([]);
+  const displayTranscript = useMemo(() => buildDisplayTranscript(transcript, displayStreamingText), [transcript, displayStreamingText]);
+
+  useEffect(() => {
+    if (!streamingText) {
+      setDisplayStreamingText('');
+      return;
+    }
+
+    if (displayStreamingText === streamingText) {
+      return;
+    }
+
+    const nextLength = Math.min(
+      streamingText.length,
+      Math.max(displayStreamingText.length + 6, Math.ceil(displayStreamingText.length + (streamingText.length - displayStreamingText.length) * 0.35)),
+    );
+
+    const timer = window.setTimeout(() => {
+      setDisplayStreamingText(streamingText.slice(0, nextLength));
+    }, 32);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [displayStreamingText, streamingText]);
 
   useEffect(() => {
     const audio = new Audio();
@@ -138,7 +259,6 @@ export default function App() {
     };
   }, []);
 
-  // 应用启动时先读取本地工作区配置，后续所有页面都基于这份配置工作。
   useEffect(() => {
     async function load() {
       try {
@@ -157,6 +277,7 @@ export default function App() {
         setConfigLoaded(true);
       }
     }
+
     load();
   }, []);
 
@@ -187,7 +308,6 @@ export default function App() {
     }
   }
 
-  // 生成对话是桌面端的主链路：发请求、接收 transcript、失败时统一弹窗。
   async function handleGenerateConversation(params: GenerateConversationInput) {
     const requestId = createRequestId();
     generateRequestIdRef.current = requestId;
@@ -196,6 +316,7 @@ export default function App() {
     setGenerateDialog(null);
     setTranscript([]);
     setStreamingText('');
+    setDisplayStreamingText('');
 
     try {
       const listeners = await Promise.all([
@@ -204,6 +325,7 @@ export default function App() {
             return;
           }
           setStreamingText('');
+          setDisplayStreamingText('');
           logger.info('generate', '开始接收流式对话', { rounds: event.payload.rounds, requestId: event.payload.requestId });
         }),
         listen<ConversationStreamDeltaEvent>(CONVERSATION_STREAM_DELTA_EVENT, event => {
@@ -224,6 +346,7 @@ export default function App() {
           }
           setTranscript(event.payload.transcript);
           setStreamingText('');
+          setDisplayStreamingText('');
           logger.info('generate', '流式对话完成事件已接收', {
             transcriptSize: event.payload.transcript.length,
             requestId: event.payload.requestId,
@@ -233,7 +356,9 @@ export default function App() {
           if (event.payload.requestId !== generateRequestIdRef.current) {
             return;
           }
+          setTranscript([]);
           setStreamingText('');
+          setDisplayStreamingText('');
           logger.warn('generate', '流式对话失败事件已接收', {
             message: event.payload.message,
             requestId: event.payload.requestId,
@@ -256,10 +381,13 @@ export default function App() {
       if (generateRequestIdRef.current === requestId) {
         setTranscript(result.transcript);
         setStreamingText('');
+        setDisplayStreamingText('');
       }
       logger.info('generate', '生成对话成功', { transcriptSize: result.transcript.length, requestId });
     } catch (err) {
+      setTranscript([]);
       setStreamingText('');
+      setDisplayStreamingText('');
       logger.error('generate', '生成对话失败', err);
       setGenerateDialog({
         title: '生成失败',
@@ -269,6 +397,7 @@ export default function App() {
     } finally {
       if (generateRequestIdRef.current === requestId) {
         setStreamingText('');
+        setDisplayStreamingText('');
         generateRequestIdRef.current = null;
       }
       clearGenerateListeners();
@@ -377,7 +506,7 @@ export default function App() {
               config={config}
               setConfig={setConfig}
               savedConfigSnapshot={savedConfigSnapshot}
-              transcript={transcript}
+              transcript={displayTranscript}
               streamingText={streamingText}
               audioFiles={audioFiles}
               playingId={playingId}
@@ -450,4 +579,3 @@ function MainContent({ activeNav, config, setConfig, savedConfigSnapshot, transc
       return <div className="empty-page-message">模块开发中...</div>;
   }
 }
-
