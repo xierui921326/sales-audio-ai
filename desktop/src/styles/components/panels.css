@@ -791,6 +791,39 @@ textarea.field-control {
   font-size: 13px;
 }
 
+.transcript-skeleton-state {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.transcript-skeleton-state__intro {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.transcript-skeleton-state__badge {
+  width: fit-content;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--blue-dark);
+  background: var(--blue-soft);
+  border-radius: 999px;
+}
+
+.transcript-skeleton-state__text {
+  max-width: 520px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
 .transcript-skeleton-list {
   display: flex;
   flex-direction: column;

@@ -122,13 +122,19 @@ function EmptyPlaceholder({ recordingState }: { recordingState: RecordingState }
 
 function ProcessingPlaceholder() {
     return (
-        <div className="transcript-skeleton-list">
-            {[80, 60, 90, 50, 70].map((w, i) => (
-                <div key={i} className={`transcript-skeleton-item ${i % 2 === 0 ? 'is-sales' : 'is-customer'}`}>
-                    <div className="transcript-skeleton-item__meta" />
-                    <div className="transcript-skeleton-item__bubble" style={{ width: `${w}%`, animationDelay: `${i * 0.1}s` }} />
-                </div>
-            ))}
+        <div className="transcript-skeleton-state">
+            <div className="transcript-skeleton-state__intro">
+                <div className="transcript-skeleton-state__badge">正在组织对话角色</div>
+                <div className="transcript-skeleton-state__text">模型已开始生成，首段话术马上进入销售或客户气泡。</div>
+            </div>
+            <div className="transcript-skeleton-list">
+                {[80, 60, 90, 50, 70].map((w, i) => (
+                    <div key={i} className={`transcript-skeleton-item ${i % 2 === 0 ? 'is-sales' : 'is-customer'}`}>
+                        <div className="transcript-skeleton-item__meta" />
+                        <div className="transcript-skeleton-item__bubble" style={{ width: `${w}%`, animationDelay: `${i * 0.1}s` }} />
+                    </div>
+                ))}
+            </div>
         </div>
     );
 }

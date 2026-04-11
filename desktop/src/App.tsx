@@ -194,14 +194,29 @@ export default function App() {
       return;
     }
 
-    const nextLength = Math.min(
-      streamingText.length,
-      Math.max(displayStreamingText.length + 6, Math.ceil(displayStreamingText.length + (streamingText.length - displayStreamingText.length) * 0.35)),
-    );
+    const nextChar = streamingText[displayStreamingText.length] ?? '';
+    const prevChar = displayStreamingText[displayStreamingText.length - 1] ?? '';
+    const remaining = streamingText.length - displayStreamingText.length;
+    const isSentenceBreak = /[，。！？：；,.!?;\n]/.test(prevChar);
+    const isClauseStart = displayStreamingText.length === 0 || isSentenceBreak;
+    const isWhitespace = /^\s$/.test(nextChar);
+    const nextStep = isWhitespace ? 2 : isClauseStart ? 1 : remaining > 24 ? 2 : 1;
+    const nextLength = Math.min(streamingText.length, displayStreamingText.length + nextStep);
+
+    let delay = 72;
+    if (isClauseStart) {
+      delay = 170;
+    } else if (/[，。！？：；,.!?;]/.test(nextChar)) {
+      delay = 128;
+    } else if (isWhitespace) {
+      delay = 92;
+    } else if (/\d/.test(nextChar)) {
+      delay = 84;
+    }
 
     const timer = window.setTimeout(() => {
       setDisplayStreamingText(streamingText.slice(0, nextLength));
-    }, 32);
+    }, delay);
 
     return () => {
       window.clearTimeout(timer);
