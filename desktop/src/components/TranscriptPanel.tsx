@@ -99,7 +99,8 @@ function StreamingBubble({ text, dimmed = false }: { text: string; dimmed?: bool
                 <div className="transcript-segment__avatar transcript-streaming__avatar" style={{ background: 'var(--sales-color)' }}>
                     销
                 </div>
-                <span className="transcript-segment__meta-text transcript-streaming__meta-text">生成中</span>
+                <span className="transcript-segment__meta-text transcript-streaming__meta-text">销售</span>
+                <span className="transcript-streaming__status">输入中</span>
             </div>
             <div className="transcript-bubble transcript-streaming__bubble">
                 <span className="transcript-streaming__text">{text}</span>

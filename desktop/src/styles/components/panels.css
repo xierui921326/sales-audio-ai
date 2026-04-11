@@ -273,33 +273,40 @@ textarea.field-control {
 
 .transcript-streaming {
   width: fit-content;
-  max-width: min(78%, 640px);
-  gap: 2px;
+  max-width: min(80%, 680px);
+  gap: 4px;
   margin-bottom: 16px;
   transition: opacity 0.15s ease;
 }
 
 .transcript-streaming.is-dimmed {
-  opacity: 0.62;
+  opacity: 0.58;
 }
 
 .transcript-streaming__meta-row {
-  gap: 4px;
-  margin-bottom: 2px;
+  gap: 5px;
+  margin-bottom: 1px;
 }
 
 .transcript-streaming__avatar {
   width: 16px;
   height: 16px;
   font-size: 8px;
-  opacity: 0.72;
+  opacity: 0.64;
 }
 
 .transcript-streaming__meta-text {
   font-size: 10px;
   color: var(--text-muted);
   letter-spacing: 0.01em;
-  opacity: 0.58;
+  opacity: 0.5;
+}
+
+.transcript-streaming__status {
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text-muted);
+  opacity: 0.4;
 }
 
 .transcript-streaming__bubble {
@@ -311,10 +318,10 @@ textarea.field-control {
   gap: 3px;
   white-space: pre-wrap;
   word-break: break-word;
-  background: rgba(255, 255, 255, 0.72);
-  border-color: rgba(31, 42, 68, 0.08);
+  background: rgba(255, 255, 255, 0.68);
+  border-color: rgba(31, 42, 68, 0.06);
   border-radius: 4px 12px 12px 12px;
-  box-shadow: 0 1px 2px rgba(31, 42, 68, 0.04);
+  box-shadow: 0 1px 2px rgba(31, 42, 68, 0.03);
   backdrop-filter: blur(2px);
 }
 
@@ -329,19 +336,20 @@ textarea.field-control {
   flex-shrink: 0;
   border-radius: 999px;
   background: var(--text-secondary);
-  opacity: 0.58;
+  opacity: 0.5;
   animation: transcript-streaming-cursor-blink 1s steps(1, end) infinite;
 }
 
 .transcript-streaming.is-dimmed .transcript-streaming__bubble {
   box-shadow: none;
-  background: rgba(255, 255, 255, 0.54);
+  background: rgba(255, 255, 255, 0.5);
 }
 
 .transcript-streaming.is-dimmed .transcript-streaming__meta-text,
+.transcript-streaming.is-dimmed .transcript-streaming__status,
 .transcript-streaming.is-dimmed .transcript-streaming__avatar,
 .transcript-streaming.is-dimmed .transcript-streaming__cursor {
-  opacity: 0.42;
+  opacity: 0.36;
 }
 
 @media (prefers-reduced-motion: reduce) {

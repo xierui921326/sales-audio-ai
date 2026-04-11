@@ -45,7 +45,6 @@ function isValidRounds(value: string): boolean {
 
 export { MIN_ROUNDS };
 
-
 export default function GeneratePage({
   config,
   transcript,
@@ -64,7 +63,6 @@ export default function GeneratePage({
     })),
     [config.llmEndpoints]
   );
-
 
   const defaultLlmId = React.useMemo(() => {
     if (config.activeLlmId && config.llmEndpoints.some(endpoint => endpoint.id === config.activeLlmId)) {
@@ -91,10 +89,12 @@ export default function GeneratePage({
   const hasValidRounds = isValidRounds(roundsInput);
   const canGenerate = Boolean(selectedLlm?.apiKey && selectedLlm?.baseUrl && selectedLlm?.model && hasScenario && hasValidRounds);
   const hasValidDefaultTts = Boolean(defaultTts?.salesVoice?.trim() && defaultTts?.customerVoice?.trim() && (defaultTts.provider === 'edge' || defaultTts.baseUrl?.trim()));
+
   React.useEffect(() => {
     const rounds = parseRounds(roundsInput) ?? DEFAULT_FORM.rounds;
     setForm(prev => ({ ...prev, rounds }));
   }, [roundsInput]);
+
   const isGeneratingConversation = busy.generatingConversation;
   const isGeneratingAudio = busy.generatingAudio;
   const recordingState: RecordingState = isGeneratingConversation ? 'processing' : transcript.length > 0 ? 'done' : 'idle';
@@ -190,7 +190,11 @@ export default function GeneratePage({
                 ) : !selectedLlm?.apiKey || !selectedLlm?.baseUrl || !selectedLlm?.model ? (
                   <div className="generate-form-hint">当前所选 LLM 缺少 API Key、Base URL 或模型，请先补全配置。</div>
                 ) : null}
+              </div>
+            </div>
 
+            <div className="generate-form-actions">
+              <div className="generate-form-actions__row">
                 <button
                   className="primary-button generate-form-submit"
                   onClick={handleGenerate}
@@ -201,18 +205,19 @@ export default function GeneratePage({
                 </button>
 
                 {transcript.length > 0 && !streamingText.trim() ? (
-                  <div className="generate-audio-actions">
-                    <div className="generate-form-hint">
-                      {hasValidDefaultTts && defaultTts
-                        ? `当前音频合成将使用默认 TTS：${defaultTts.title || defaultTts.ttsModel || '未命名 TTS'}。如需切换，请前往 TTS 配置页修改默认配置。`
-                        : '当前默认 TTS 不可用，请先到 TTS 配置页补全并保存默认配置。'}
-                    </div>
-                    <button className="success-button generate-form-submit" onClick={onGenerateAudio} disabled={isGeneratingConversation || isGeneratingAudio} type="button">
-                      {isGeneratingAudio ? '正在合成音频...' : '同步合成本地音频'}
-                    </button>
-                  </div>
+                  <button className="success-button generate-form-submit" onClick={onGenerateAudio} disabled={isGeneratingConversation || isGeneratingAudio} type="button">
+                    {isGeneratingAudio ? '正在合成音频...' : '同步合成本地音频'}
+                  </button>
                 ) : null}
               </div>
+
+              {transcript.length > 0 && !streamingText.trim() ? (
+                <div className="generate-audio-note">
+                  {hasValidDefaultTts && defaultTts
+                    ? `默认 TTS：${defaultTts.title || defaultTts.ttsModel || '未命名 TTS'}，如需切换请前往 TTS 配置页。`
+                    : '默认 TTS 不可用，请先到 TTS 配置页补全并保存默认配置。'}
+                </div>
+              ) : null}
             </div>
           </section>
         </div>
