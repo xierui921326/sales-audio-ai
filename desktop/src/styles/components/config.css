@@ -67,18 +67,19 @@
   padding: 10px 12px;
   color: var(--text-primary);
   background: var(--surface);
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
   border-radius: 12px;
   cursor: pointer;
 }
 
 .sub-nav-item:hover {
   background: var(--surface-muted);
+  border-color: rgba(47, 128, 255, 0.14);
 }
 
 .sub-nav-item.is-active {
   background: linear-gradient(180deg, #f0f6ff, #ebf3ff);
-  border-color: rgba(47, 128, 255, 0.16);
+  border-color: rgba(47, 128, 255, 0.22);
 }
 
 .sub-nav-item__content {
