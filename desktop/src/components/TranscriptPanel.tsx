@@ -4,16 +4,18 @@ import { TranscriptSegment, RecordingState } from '../types';
 interface Props {
     transcript: TranscriptSegment[];
     recordingState: RecordingState;
+    streamingText?: string;
 }
 
-export default function TranscriptPanel({ transcript, recordingState }: Props) {
+export default function TranscriptPanel({ transcript, recordingState, streamingText = '' }: Props) {
     const bottomRef = useRef<HTMLDivElement>(null);
 
     // 新对话进来后自动滚到底部，避免用户每次生成后还要手动下拉查看最新内容。
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [transcript]);
+    }, [transcript, streamingText]);
 
+    const hasStreamingText = streamingText.trim().length > 0;
     const isEmpty = transcript.length === 0;
     const isProcessing = recordingState === 'processing';
 
@@ -28,15 +30,16 @@ export default function TranscriptPanel({ transcript, recordingState }: Props) {
             </div>
 
             <div className="transcript-panel__content">
-                {isProcessing && isEmpty ? (
+                {isProcessing && isEmpty && !hasStreamingText ? (
                     <ProcessingPlaceholder />
-                ) : isEmpty ? (
+                ) : isEmpty && !hasStreamingText ? (
                     <EmptyPlaceholder recordingState={recordingState} />
                 ) : (
                     <>
-                        {transcript.map((seg) => (
+                        {transcript.map(seg => (
                             <SegmentBubble key={seg.id} segment={seg} />
                         ))}
+                        {hasStreamingText ? <StreamingBubble text={streamingText} dimmed={transcript.length > 0} /> : null}
                         {recordingState === 'recording' && <TypingIndicator />}
                     </>
                 )}
@@ -84,6 +87,23 @@ function SegmentBubble({ segment }: { segment: TranscriptSegment }) {
 
             <div className="transcript-bubble">
                 {renderText(segment.text, segment.keywords)}
+            </div>
+        </div>
+    );
+}
+
+function StreamingBubble({ text, dimmed = false }: { text: string; dimmed?: boolean }) {
+    return (
+        <div className={`transcript-streaming transcript-segment is-sales${dimmed ? ' is-dimmed' : ''}`} aria-live="polite">
+            <div className="transcript-segment__meta-row transcript-streaming__meta-row">
+                <div className="transcript-segment__avatar transcript-streaming__avatar" style={{ background: 'var(--sales-color)' }}>
+                    销
+                </div>
+                <span className="transcript-segment__meta-text transcript-streaming__meta-text">生成中</span>
+            </div>
+            <div className="transcript-bubble transcript-streaming__bubble">
+                <span className="transcript-streaming__text">{text}</span>
+                <span className="transcript-streaming__cursor" aria-hidden="true" />
             </div>
         </div>
     );

@@ -253,6 +253,13 @@ struct ConversationDeltaEvent {
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+struct ConversationStreamDeltaEvent {
+    request_id: String,
+    text_delta: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct ConversationCompletedEvent {
     request_id: String,
     transcript: Vec<TranscriptSegment>,
@@ -1494,7 +1501,10 @@ fn append_text_delta_and_emit(
     streamed_segment_count: &mut usize,
     delta: &str,
 ) -> Result<(), String> {
-    accumulated_content.push_str(delta);
+    if !delta.is_empty() {
+        emit_conversation_stream_delta(app, request_id, delta)?;
+        accumulated_content.push_str(delta);
+    }
     let partial_transcript = build_partial_transcript(accumulated_content);
     if partial_transcript.len() > *streamed_segment_count {
         for segment in partial_transcript.iter().skip(*streamed_segment_count) {
@@ -1750,6 +1760,17 @@ fn emit_conversation_delta(app: &AppHandle, request_id: &str, segment: &Transcri
         },
     )
     .map_err(|e| format!("发送增量事件失败: {e}"))
+}
+
+fn emit_conversation_stream_delta(app: &AppHandle, request_id: &str, text_delta: &str) -> Result<(), String> {
+    app.emit(
+        "conversation_stream_delta",
+        ConversationStreamDeltaEvent {
+            request_id: request_id.to_string(),
+            text_delta: text_delta.to_string(),
+        },
+    )
+    .map_err(|e| format!("发送实时文本增量事件失败: {e}"))
 }
 
 fn emit_conversation_completed(

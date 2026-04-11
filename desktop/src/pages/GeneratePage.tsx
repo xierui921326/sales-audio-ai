@@ -7,6 +7,7 @@ import { AppConfig, GenerateBusyState, GenerateConversationInput, RecordingState
 interface GeneratePageProps {
   config: AppConfig;
   transcript: TranscriptSegment[];
+  streamingText: string;
   onGenerate: (params: GenerateConversationInput) => Promise<void>;
   onGenerateAudio: () => Promise<void>;
   busy: GenerateBusyState;
@@ -48,6 +49,7 @@ export { MIN_ROUNDS };
 export default function GeneratePage({
   config,
   transcript,
+  streamingText,
   onGenerate,
   onGenerateAudio,
   busy,
@@ -198,7 +200,7 @@ export default function GeneratePage({
                   {isGeneratingConversation ? '脑力激荡中...' : '开始生成对话'}
                 </button>
 
-                {transcript.length > 0 ? (
+                {transcript.length > 0 && !streamingText.trim() ? (
                   <div className="generate-audio-actions">
                     <div className="generate-form-hint">
                       {hasValidDefaultTts && defaultTts
@@ -216,7 +218,7 @@ export default function GeneratePage({
         </div>
 
         <div className="card-base conversation-layout generate-transcript-card">
-          <TranscriptPanel transcript={transcript} recordingState={recordingState} />
+          <TranscriptPanel transcript={transcript} recordingState={recordingState} streamingText={streamingText} />
         </div>
       </div>
     </div>

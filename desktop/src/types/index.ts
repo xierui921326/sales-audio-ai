@@ -115,6 +115,7 @@ export interface GenerateConversationOutput {
 
 export const CONVERSATION_STARTED_EVENT = 'conversation_started';
 export const CONVERSATION_DELTA_EVENT = 'conversation_delta';
+export const CONVERSATION_STREAM_DELTA_EVENT = 'conversation_stream_delta';
 export const CONVERSATION_COMPLETED_EVENT = 'conversation_completed';
 export const CONVERSATION_FAILED_EVENT = 'conversation_failed';
 
@@ -128,6 +129,10 @@ export interface ConversationStartedEvent extends ConversationStreamBaseEvent {
 
 export interface ConversationDeltaEvent extends ConversationStreamBaseEvent {
     segment: TranscriptSegment;
+}
+
+export interface ConversationStreamDeltaEvent extends ConversationStreamBaseEvent {
+    textDelta: string;
 }
 
 export interface ConversationCompletedEvent extends ConversationStreamBaseEvent {

@@ -21,10 +21,12 @@ import {
   GenerateBusyState,
   ConversationStartedEvent,
   ConversationDeltaEvent,
+  ConversationStreamDeltaEvent,
   ConversationCompletedEvent,
   ConversationFailedEvent,
   CONVERSATION_STARTED_EVENT,
   CONVERSATION_DELTA_EVENT,
+  CONVERSATION_STREAM_DELTA_EVENT,
   CONVERSATION_COMPLETED_EVENT,
   CONVERSATION_FAILED_EVENT,
 } from './types';
@@ -69,6 +71,7 @@ export default function App() {
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [activeNav, setActiveNav] = useState<NavigationItemId>('generate');
   const [transcript, setTranscript] = useState<TranscriptSegment[]>([]);
+  const [streamingText, setStreamingText] = useState('');
   const [busy, setBusy] = useState<GenerateBusyState>({
     generatingConversation: false,
     generatingAudio: false,
@@ -192,6 +195,7 @@ export default function App() {
     setBusy(current => ({ ...current, generatingConversation: true }));
     setGenerateDialog(null);
     setTranscript([]);
+    setStreamingText('');
 
     try {
       const listeners = await Promise.all([
@@ -199,7 +203,14 @@ export default function App() {
           if (event.payload.requestId !== generateRequestIdRef.current) {
             return;
           }
+          setStreamingText('');
           logger.info('generate', '开始接收流式对话', { rounds: event.payload.rounds, requestId: event.payload.requestId });
+        }),
+        listen<ConversationStreamDeltaEvent>(CONVERSATION_STREAM_DELTA_EVENT, event => {
+          if (event.payload.requestId !== generateRequestIdRef.current) {
+            return;
+          }
+          setStreamingText(current => current + event.payload.textDelta);
         }),
         listen<ConversationDeltaEvent>(CONVERSATION_DELTA_EVENT, event => {
           if (event.payload.requestId !== generateRequestIdRef.current) {
@@ -212,6 +223,7 @@ export default function App() {
             return;
           }
           setTranscript(event.payload.transcript);
+          setStreamingText('');
           logger.info('generate', '流式对话完成事件已接收', {
             transcriptSize: event.payload.transcript.length,
             requestId: event.payload.requestId,
@@ -221,6 +233,7 @@ export default function App() {
           if (event.payload.requestId !== generateRequestIdRef.current) {
             return;
           }
+          setStreamingText('');
           logger.warn('generate', '流式对话失败事件已接收', {
             message: event.payload.message,
             requestId: event.payload.requestId,
@@ -242,9 +255,11 @@ export default function App() {
       });
       if (generateRequestIdRef.current === requestId) {
         setTranscript(result.transcript);
+        setStreamingText('');
       }
       logger.info('generate', '生成对话成功', { transcriptSize: result.transcript.length, requestId });
     } catch (err) {
+      setStreamingText('');
       logger.error('generate', '生成对话失败', err);
       setGenerateDialog({
         title: '生成失败',
@@ -253,6 +268,7 @@ export default function App() {
       });
     } finally {
       if (generateRequestIdRef.current === requestId) {
+        setStreamingText('');
         generateRequestIdRef.current = null;
       }
       clearGenerateListeners();
@@ -362,6 +378,7 @@ export default function App() {
               setConfig={setConfig}
               savedConfigSnapshot={savedConfigSnapshot}
               transcript={transcript}
+              streamingText={streamingText}
               audioFiles={audioFiles}
               playingId={playingId}
               onPlay={handlePlay}
@@ -402,6 +419,7 @@ interface MainContentProps {
   setConfig: React.Dispatch<React.SetStateAction<AppConfig>>;
   savedConfigSnapshot: AppConfig;
   transcript: TranscriptSegment[];
+  streamingText: string;
   audioFiles: AudioFileItem[];
   playingId: string | null;
   onPlay: (id: string) => void;
@@ -413,10 +431,10 @@ interface MainContentProps {
   busy: GenerateBusyState;
 }
 
-function MainContent({ activeNav, config, setConfig, savedConfigSnapshot, transcript, audioFiles, playingId, onPlay, onGenerateConv, onGenerateAudio, onSaveConfig, configSaveState, hasUnsavedChanges, busy }: MainContentProps) {
+function MainContent({ activeNav, config, setConfig, savedConfigSnapshot, transcript, streamingText, audioFiles, playingId, onPlay, onGenerateConv, onGenerateAudio, onSaveConfig, configSaveState, hasUnsavedChanges, busy }: MainContentProps) {
   switch (activeNav) {
     case 'generate':
-      return <GeneratePage config={config} transcript={transcript} onGenerate={onGenerateConv} onGenerateAudio={onGenerateAudio} busy={busy} />;
+      return <GeneratePage config={config} transcript={transcript} streamingText={streamingText} onGenerate={onGenerateConv} onGenerateAudio={onGenerateAudio} busy={busy} />;
     case 'audio':
       return (
         <div className="page-view flex-col animate-fade-in">
