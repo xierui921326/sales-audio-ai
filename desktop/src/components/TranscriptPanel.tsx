@@ -27,9 +27,9 @@ export default function TranscriptPanel({ transcript, recordingState }: Props) {
                 </div>
             </div>
 
-            <div className="transcript-panel__content">
+            <div className={`transcript-panel__content${isProcessing && isEmpty ? ' transcript-panel__content--processing' : ''}`}>
                 {isProcessing && isEmpty ? (
-                    <ProcessingPlaceholder />
+                    <ProcessingOverlay />
                 ) : isEmpty ? (
                     <EmptyPlaceholder recordingState={recordingState} />
                 ) : (
@@ -120,14 +120,16 @@ function EmptyPlaceholder({ recordingState }: { recordingState: RecordingState }
     );
 }
 
-function ProcessingPlaceholder() {
+function ProcessingOverlay() {
     return (
-        <div className="transcript-skeleton-state">
-            <div className="transcript-skeleton-state__intro">
-                <div className="transcript-skeleton-state__badge">正在组织对话角色</div>
-                <div className="transcript-skeleton-state__text">模型已开始生成，首段话术马上进入销售或客户气泡。</div>
+        <div className="transcript-processing-overlay">
+            <div className="transcript-processing-overlay__scrim" />
+            <div className="transcript-processing-overlay__card">
+                <div className="transcript-processing-overlay__badge">正在组织对话角色</div>
+                <div className="transcript-processing-overlay__title">模型已开始生成</div>
+                <div className="transcript-processing-overlay__text">首段话术马上进入销售或客户气泡，请稍候。</div>
             </div>
-            <div className="transcript-skeleton-list">
+            <div className="transcript-skeleton-list" aria-hidden="true">
                 {[80, 60, 90, 50, 70].map((w, i) => (
                     <div key={i} className={`transcript-skeleton-item ${i % 2 === 0 ? 'is-sales' : 'is-customer'}`}>
                         <div className="transcript-skeleton-item__meta" />

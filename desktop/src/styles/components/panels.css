@@ -192,6 +192,10 @@ textarea.field-control {
   padding: 16px 24px;
 }
 
+.transcript-panel__content--processing {
+  position: relative;
+}
+
 .transcript-legend-item {
   display: inline-flex;
   align-items: center;
@@ -791,23 +795,39 @@ textarea.field-control {
   font-size: 13px;
 }
 
-.transcript-skeleton-state {
+.transcript-processing-overlay {
+  position: relative;
+  min-height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  justify-content: center;
 }
 
-.transcript-skeleton-state__intro {
+.transcript-processing-overlay__scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(2px);
+}
+
+.transcript-processing-overlay__card {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  width: min(100%, 360px);
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 14px 16px;
-  background: var(--surface-muted);
+  padding: 18px 20px;
+  background: rgba(255, 255, 255, 0.96);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 16px;
+  box-shadow: 0 12px 28px rgba(31, 42, 68, 0.08);
+  transform: translate(-50%, -50%);
 }
 
-.transcript-skeleton-state__badge {
+.transcript-processing-overlay__badge {
   width: fit-content;
   padding: 4px 10px;
   font-size: 12px;
@@ -817,8 +837,13 @@ textarea.field-control {
   border-radius: 999px;
 }
 
-.transcript-skeleton-state__text {
-  max-width: 520px;
+.transcript-processing-overlay__title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.transcript-processing-overlay__text {
   font-size: 13px;
   line-height: 1.6;
   color: var(--text-secondary);
@@ -828,6 +853,56 @@ textarea.field-control {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.transcript-processing-overlay .transcript-skeleton-list {
+  position: relative;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item__meta,
+.transcript-processing-overlay .transcript-skeleton-item__bubble {
+  opacity: 0.82;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item__bubble {
+  height: 44px;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item.is-sales .transcript-skeleton-item__bubble {
+  border-radius: 4px 12px 12px 12px;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item.is-customer .transcript-skeleton-item__bubble {
+  border-radius: 12px 4px 12px 12px;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item.is-customer .transcript-skeleton-item__meta {
+  align-self: flex-end;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item:last-child {
+  margin-bottom: 12px;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item {
+  position: relative;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item,
+.transcript-processing-overlay .transcript-skeleton-list {
+  pointer-events: none;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item__meta,
+.transcript-processing-overlay .transcript-skeleton-item__bubble,
+.transcript-processing-overlay__card {
+  animation-duration: 1.6s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transcript-processing-overlay__scrim {
+    backdrop-filter: none;
+  }
 }
 
 .transcript-skeleton-item {
