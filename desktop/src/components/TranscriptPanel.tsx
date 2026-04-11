@@ -123,17 +123,15 @@ function EmptyPlaceholder({ recordingState }: { recordingState: RecordingState }
 function ProcessingOverlay() {
     return (
         <div className="transcript-processing-overlay">
-            <div className="transcript-processing-overlay__scrim" />
-            <div className="transcript-processing-overlay__card">
-                <div className="transcript-processing-overlay__badge">正在组织对话角色</div>
-                <div className="transcript-processing-overlay__title">模型已开始生成</div>
-                <div className="transcript-processing-overlay__text">首段话术马上进入销售或客户气泡，请稍候。</div>
-            </div>
             <div className="transcript-skeleton-list" aria-hidden="true">
-                {[80, 60, 90, 50, 70].map((w, i) => (
-                    <div key={i} className={`transcript-skeleton-item ${i % 2 === 0 ? 'is-sales' : 'is-customer'}`}>
+                {[
+                    { width: 74, side: 'sales' },
+                    { width: 56, side: 'customer' },
+                    { width: 68, side: 'sales' },
+                ].map((item, i) => (
+                    <div key={i} className={`transcript-skeleton-item ${item.side === 'sales' ? 'is-sales' : 'is-customer'}`}>
                         <div className="transcript-skeleton-item__meta" />
-                        <div className="transcript-skeleton-item__bubble" style={{ width: `${w}%`, animationDelay: `${i * 0.1}s` }} />
+                        <div className="transcript-skeleton-item__bubble" style={{ width: `${item.width}%` }} />
                     </div>
                 ))}
             </div>

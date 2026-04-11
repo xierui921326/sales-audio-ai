@@ -221,23 +221,40 @@ export default function LlmConfigPage({ config, setConfig, savedConfigSnapshot, 
           <span>新增配置</span>
         </button>
         <div className="sub-sidebar__list">
-          {config.llmEndpoints.map((ep) => (
-            <div
-              key={ep.id}
-              className={`sub-nav-item ${selectedEndpointId === ep.id ? 'is-active' : ''}`}
-              onClick={() => setSelectedEndpointId(ep.id)}
-            >
-              <div className="sub-nav-item__content">
-                <span>{ep.title}</span>
+          {config.llmEndpoints.map((ep) => {
+            const isSelected = selectedEndpointId === ep.id;
+            const isDefault = defaultEndpointId === ep.id;
+
+            return (
+              <div
+                key={ep.id}
+                className={`sub-nav-item ${isSelected ? 'is-active' : ''}`}
+                onClick={() => setSelectedEndpointId(ep.id)}
+              >
+                <div className="sub-nav-item__content">
+                  <span>{ep.title}</span>
+                </div>
+                <div className="sub-nav-item__actions">
+                  {isDefault ? <span className="sub-nav-item__badge">默认</span> : null}
+                  {!isDefault && isSelected ? (
+                    <button
+                      className="sub-nav-item__set-default chip-button strong-secondary"
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDefaultLlmId(ep.id);
+                      }}
+                    >
+                      设为默认
+                    </button>
+                  ) : null}
+                  <button className="del-btn" type="button" onClick={(e) => { e.stopPropagation(); deleteEndpoint(ep.id); }}>
+                    <span className="icon-shape icon-shape--close" aria-hidden="true" />
+                  </button>
+                </div>
               </div>
-              <div className="sub-nav-item__actions">
-                {defaultEndpointId === ep.id ? <span className="sub-nav-item__badge">默认</span> : null}
-                <button className="del-btn" type="button" onClick={(e) => { e.stopPropagation(); deleteEndpoint(ep.id); }}>
-                  <span className="icon-shape icon-shape--close" aria-hidden="true" />
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </aside>
 
@@ -287,14 +304,6 @@ export default function LlmConfigPage({ config, setConfig, savedConfigSnapshot, 
 
               <div className="config-form-stack">
                 <div className="group-card">
-                  {defaultEndpointId !== activeEndpoint.id ? (
-                    <div className="config-inline-action-bar config-inline-action-bar--inside-card">
-                      <div className="config-inline-action-bar__text">当前选中项还不是默认 LLM。</div>
-                      <button className="chip-button strong-secondary" onClick={() => setDefaultLlmId(activeEndpoint.id)} type="button">
-                        设为默认 LLM
-                      </button>
-                    </div>
-                  ) : null}
                   <div className="field-block">
                     <label>供应商名称</label>
                     <input

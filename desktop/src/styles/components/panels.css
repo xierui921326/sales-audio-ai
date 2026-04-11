@@ -796,57 +796,17 @@ textarea.field-control {
 }
 
 .transcript-processing-overlay {
-  position: relative;
   min-height: 100%;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  padding-top: 6px;
 }
 
-.transcript-processing-overlay__scrim {
-  position: absolute;
-  inset: 0;
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(2px);
-}
-
-.transcript-processing-overlay__card {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  z-index: 1;
-  width: min(100%, 360px);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 18px 20px;
-  background: rgba(255, 255, 255, 0.96);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  box-shadow: 0 12px 28px rgba(31, 42, 68, 0.08);
-  transform: translate(-50%, -50%);
-}
-
-.transcript-processing-overlay__badge {
-  width: fit-content;
-  padding: 4px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--blue-dark);
-  background: var(--blue-soft);
-  border-radius: 999px;
-}
-
-.transcript-processing-overlay__title {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.transcript-processing-overlay__text {
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-secondary);
+.transcript-processing-overlay__scrim,
+.transcript-processing-overlay__banner,
+.transcript-processing-overlay__dot,
+.transcript-processing-overlay__label {
+  display: none;
 }
 
 .transcript-skeleton-list {
@@ -857,15 +817,92 @@ textarea.field-control {
 
 .transcript-processing-overlay .transcript-skeleton-list {
   position: relative;
+  width: 100%;
+  max-width: 760px;
+  padding-top: 0;
+  gap: 18px;
 }
 
 .transcript-processing-overlay .transcript-skeleton-item__meta,
 .transcript-processing-overlay .transcript-skeleton-item__bubble {
-  opacity: 0.82;
+  animation: none;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item__meta {
+  width: 52px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(141, 154, 176, 0.12);
 }
 
 .transcript-processing-overlay .transcript-skeleton-item__bubble {
-  height: 44px;
+  height: 34px;
+  background: rgba(141, 154, 176, 0.08);
+  border: none;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item.is-sales .transcript-skeleton-item__bubble {
+  border-radius: 4px 10px 10px 10px;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item.is-customer .transcript-skeleton-item__bubble {
+  border-radius: 10px 4px 10px 10px;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item:nth-child(2) {
+  margin-top: 4px;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item:nth-child(3) {
+  margin-top: 6px;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item:nth-child(3) .transcript-skeleton-item__bubble {
+  height: 38px;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item.is-customer .transcript-skeleton-item__meta {
+  margin-right: 10px;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item.is-sales .transcript-skeleton-item__meta {
+  margin-left: 6px;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item.is-customer .transcript-skeleton-item__bubble {
+  margin-right: 0;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item.is-sales .transcript-skeleton-item__bubble {
+  margin-left: 0;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item__bubble {
+  box-shadow: none;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item__meta {
+  box-shadow: none;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item {
+  opacity: 0.92;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item:hover {
+  opacity: 0.92;
+}
+
+.transcript-processing-overlay .transcript-skeleton-item:nth-child(2) .transcript-skeleton-item__bubble {
+  width: min(56%, 420px);
+}
+
+.transcript-processing-overlay .transcript-skeleton-item:nth-child(1) .transcript-skeleton-item__bubble {
+  width: min(74%, 560px);
+}
+
+.transcript-processing-overlay .transcript-skeleton-item:nth-child(3) .transcript-skeleton-item__bubble {
+  width: min(68%, 520px);
 }
 
 .transcript-processing-overlay .transcript-skeleton-item.is-sales .transcript-skeleton-item__bubble {
@@ -881,7 +918,7 @@ textarea.field-control {
 }
 
 .transcript-processing-overlay .transcript-skeleton-item:last-child {
-  margin-bottom: 12px;
+  margin-bottom: 4px;
 }
 
 .transcript-processing-overlay .transcript-skeleton-item {

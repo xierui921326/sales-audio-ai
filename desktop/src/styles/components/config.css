@@ -83,6 +83,7 @@
 
 .sub-nav-item__content {
   min-width: 0;
+  flex: 1;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -113,6 +114,13 @@
   background: var(--blue-soft);
   border: 1px solid rgba(47, 128, 255, 0.14);
   border-radius: 999px;
+}
+
+.sub-nav-item__set-default {
+  min-height: 24px;
+  padding: 4px 10px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .config-default-inline-tip {
