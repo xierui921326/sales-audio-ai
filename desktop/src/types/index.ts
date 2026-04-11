@@ -3,7 +3,8 @@ export type NavigationItemId =
     | 'generate'
     | 'audio'
     | 'llm'
-    | 'tts';
+    | 'tts'
+    | 'prompt';
 
 export interface TranscriptSegment {
     id: string;
@@ -73,11 +74,19 @@ export interface TtsEndpointConfig {
     customerVoice: string;
 }
 
+export interface PromptTemplate {
+    id: string;
+    title: string;
+    description: string;
+    systemPrompt: string;
+}
+
 export interface AppConfig {
     activeLlmId: string;
     llmEndpoints: LlmEndpointConfig[];
     activeTtsId: string;
     ttsEndpoints: TtsEndpointConfig[];
+    activePromptId: string;
 
     audioDir: string;
     databasePath: string;
@@ -98,6 +107,7 @@ export interface AppConfig {
 
 export interface WorkspaceData {
     config: AppConfig;
+    prompts: PromptTemplate[];
 }
 
 export interface GenerateConversationInput {

@@ -5,6 +5,7 @@ const NAV_ITEMS = [
   { id: 'audio', label: '音频管理', iconClass: 'nav-icon-shape nav-icon-shape--audio', description: '预览、播放并导出生成的音频' },
   { id: 'llm', label: 'LLM 配置', iconClass: 'nav-icon-shape nav-icon-shape--llm', description: '管理大语言模型 API 终端' },
   { id: 'tts', label: 'TTS 配置', iconClass: 'nav-icon-shape nav-icon-shape--tts', description: '管理语音合成服务商信息' },
+  { id: 'prompt', label: 'Prompt 配置', iconClass: 'nav-icon-shape nav-icon-shape--llm', description: '管理系统 Prompt 模板与默认项' },
 ] as const;
 
 interface SidebarProps {

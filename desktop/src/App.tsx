@@ -8,6 +8,7 @@ import GeneratePage from './pages/GeneratePage';
 import AudioPage from './pages/AudioPage';
 import LlmConfigPage from './pages/LlmConfigPage';
 import TtsConfigPage from './pages/TtsConfigPage';
+import PromptConfigPage from './pages/PromptConfigPage';
 import { logger } from './utils/logger';
 
 import {
@@ -19,6 +20,7 @@ import {
   GenerateConversationInput,
   GenerateConversationOutput,
   GenerateBusyState,
+  PromptTemplate,
   ConversationStartedEvent,
   ConversationDeltaEvent,
   ConversationStreamDeltaEvent,
@@ -36,10 +38,13 @@ const DEFAULT_CONFIG: AppConfig = {
   llmEndpoints: [],
   activeTtsId: '',
   ttsEndpoints: [],
+  activePromptId: '',
   audioDir: '',
   databasePath: '',
   configFile: '',
 };
+
+const DEFAULT_PROMPTS: PromptTemplate[] = [];
 
 function createRequestId(): string {
   return `conversation-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -177,6 +182,9 @@ export default function App() {
   const [configSaveState, setConfigSaveState] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const [configLoaded, setConfigLoaded] = useState(false);
   const [savedConfigSnapshot, setSavedConfigSnapshot] = useState<AppConfig>(DEFAULT_CONFIG);
+  const [prompts, setPrompts] = useState<PromptTemplate[]>(DEFAULT_PROMPTS);
+  const [savedPromptsSnapshot, setSavedPromptsSnapshot] = useState<PromptTemplate[]>(DEFAULT_PROMPTS);
+  const [promptSaveState, setPromptSaveState] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const [generateDialog, setGenerateDialog] = useState<GenerateDialogState>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioObjectUrlRef = useRef<string | null>(null);
@@ -287,10 +295,13 @@ export default function App() {
         const workspace = await invoke<WorkspaceData>('load_workspace');
         setConfig(workspace.config);
         setSavedConfigSnapshot(workspace.config);
+        setPrompts(workspace.prompts);
+        setSavedPromptsSnapshot(workspace.prompts);
         await reloadAudioFiles();
         logger.info('app', '工作区加载完成', {
           llmCount: workspace.config.llmEndpoints.length,
           ttsCount: workspace.config.ttsEndpoints.length,
+          promptCount: workspace.prompts.length,
         });
       } catch (err) {
         logger.error('app', '加载工作区失败', err);
@@ -309,6 +320,49 @@ export default function App() {
 
     return JSON.stringify(config) !== JSON.stringify(savedConfigSnapshot);
   }, [config, configLoaded, savedConfigSnapshot]);
+
+  const hasUnsavedPromptChanges = useMemo(() => {
+    if (!configLoaded) {
+      return false;
+    }
+
+    return JSON.stringify(prompts) !== JSON.stringify(savedPromptsSnapshot);
+  }, [configLoaded, prompts, savedPromptsSnapshot]);
+
+  useEffect(() => {
+    if (promptSaveState === 'success' || promptSaveState === 'error') {
+      setPromptSaveState('idle');
+    }
+  }, [prompts, promptSaveState]);
+
+  useEffect(() => {
+    if (configSaveState === 'success' || configSaveState === 'error') {
+      setConfigSaveState('idle');
+    }
+  }, [config, configSaveState]);
+
+  async function handleSavePrompts() {
+    if (!configLoaded) {
+      return;
+    }
+
+    setPromptSaveState('saving');
+    try {
+      logger.info('prompt', '开始保存 Prompt 模板', { promptCount: prompts.length });
+      const savedPrompts = await invoke<PromptTemplate[]>('save_prompts', { prompts });
+      setPrompts(savedPrompts);
+      setSavedPromptsSnapshot(savedPrompts);
+      setPromptSaveState('success');
+      logger.info('prompt', 'Prompt 模板保存成功', { promptCount: savedPrompts.length });
+    } catch (err) {
+      logger.error('prompt', 'Prompt 模板保存失败', err);
+      setPromptSaveState('error');
+    }
+  }
+
+  function handleSetPrompts(nextPrompts: React.SetStateAction<PromptTemplate[]>) {
+    setPrompts(nextPrompts);
+  }
 
   async function handleSaveConfig() {
     if (!configLoaded) {
@@ -527,6 +581,8 @@ export default function App() {
               config={config}
               setConfig={setConfig}
               savedConfigSnapshot={savedConfigSnapshot}
+              prompts={prompts}
+              setPrompts={handleSetPrompts}
               transcript={displayTranscript}
               streamingText={streamingText}
               audioFiles={audioFiles}
@@ -535,8 +591,11 @@ export default function App() {
               onGenerateConv={handleGenerateConversation}
               onGenerateAudio={handleGenerateAudio}
               onSaveConfig={handleSaveConfig}
+              onSavePrompts={handleSavePrompts}
               configSaveState={configSaveState}
+              promptSaveState={promptSaveState}
               hasUnsavedChanges={hasUnsavedChanges}
+              hasUnsavedPromptChanges={hasUnsavedPromptChanges}
               busy={busy}
             />
           </main>
@@ -568,6 +627,8 @@ interface MainContentProps {
   config: AppConfig;
   setConfig: React.Dispatch<React.SetStateAction<AppConfig>>;
   savedConfigSnapshot: AppConfig;
+  prompts: PromptTemplate[];
+  setPrompts: React.Dispatch<React.SetStateAction<PromptTemplate[]>>;
   transcript: TranscriptSegment[];
   streamingText: string;
   audioFiles: AudioFileItem[];
@@ -576,15 +637,18 @@ interface MainContentProps {
   onGenerateConv: (params: GenerateConversationInput) => Promise<void>;
   onGenerateAudio: () => Promise<void>;
   onSaveConfig: () => Promise<void>;
+  onSavePrompts: () => Promise<void>;
   configSaveState: 'idle' | 'saving' | 'success' | 'error';
+  promptSaveState: 'idle' | 'saving' | 'success' | 'error';
   hasUnsavedChanges: boolean;
+  hasUnsavedPromptChanges: boolean;
   busy: GenerateBusyState;
 }
 
-function MainContent({ activeNav, config, setConfig, savedConfigSnapshot, transcript, streamingText, audioFiles, playingId, onPlay, onGenerateConv, onGenerateAudio, onSaveConfig, configSaveState, hasUnsavedChanges, busy }: MainContentProps) {
+function MainContent({ activeNav, config, setConfig, savedConfigSnapshot, prompts, setPrompts, transcript, streamingText, audioFiles, playingId, onPlay, onGenerateConv, onGenerateAudio, onSaveConfig, onSavePrompts, configSaveState, promptSaveState, hasUnsavedChanges, hasUnsavedPromptChanges, busy }: MainContentProps) {
   switch (activeNav) {
     case 'generate':
-      return <GeneratePage config={config} transcript={transcript} streamingText={streamingText} onGenerate={onGenerateConv} onGenerateAudio={onGenerateAudio} busy={busy} />;
+      return <GeneratePage config={config} prompts={prompts} transcript={transcript} streamingText={streamingText} onGenerate={onGenerateConv} onGenerateAudio={onGenerateAudio} busy={busy} />;
     case 'audio':
       return (
         <div className="page-view flex-col animate-fade-in">
@@ -596,6 +660,8 @@ function MainContent({ activeNav, config, setConfig, savedConfigSnapshot, transc
       return <LlmConfigPage config={config} setConfig={setConfig} savedConfigSnapshot={savedConfigSnapshot} onSaveConfig={onSaveConfig} configSaveState={configSaveState} hasUnsavedChanges={hasUnsavedChanges} />;
     case 'tts':
       return <TtsConfigPage config={config} setConfig={setConfig} savedConfigSnapshot={savedConfigSnapshot} onSaveConfig={onSaveConfig} configSaveState={configSaveState} hasUnsavedChanges={hasUnsavedChanges} />;
+    case 'prompt':
+      return <PromptConfigPage prompts={prompts} setPrompts={setPrompts} onSavePrompts={onSavePrompts} promptSaveState={promptSaveState} hasUnsavedPromptChanges={hasUnsavedPromptChanges} />;
     default:
       return <div className="empty-page-message">模块开发中...</div>;
   }

@@ -2,10 +2,11 @@ import React from 'react';
 import ConfigSelect from '../components/config/ConfigSelect';
 import TranscriptPanel from '../components/TranscriptPanel';
 import { logger } from '../utils/logger';
-import { AppConfig, GenerateBusyState, GenerateConversationInput, RecordingState, TranscriptSegment } from '../types';
+import { AppConfig, GenerateBusyState, GenerateConversationInput, PromptTemplate, RecordingState, TranscriptSegment } from '../types';
 
 interface GeneratePageProps {
   config: AppConfig;
+  prompts: PromptTemplate[];
   transcript: TranscriptSegment[];
   streamingText: string;
   onGenerate: (params: GenerateConversationInput) => Promise<void>;
@@ -47,6 +48,7 @@ export { MIN_ROUNDS };
 
 export default function GeneratePage({
   config,
+  prompts,
   transcript,
   streamingText,
   onGenerate,
@@ -73,6 +75,7 @@ export default function GeneratePage({
   }, [config.activeLlmId, config.llmEndpoints]);
 
   const [selectedLlmId, setSelectedLlmId] = React.useState(defaultLlmId);
+  const selectedPrompt = prompts[0];
 
   React.useEffect(() => {
     setSelectedLlmId(current => {
@@ -119,6 +122,7 @@ export default function GeneratePage({
       rounds,
       supplementalPrompt: form.supplementalPrompt?.trim() ?? '',
       llmEndpointId: selectedLlmId,
+      systemPrompt: selectedPrompt?.systemPrompt?.trim() || undefined,
     }).catch(err => {
       logger.error('generate-page', '触发生成请求失败', err);
     });
@@ -181,6 +185,7 @@ export default function GeneratePage({
                       placeholder="请选择 LLM 配置"
                     />
                   </div>
+
                 </div>
 
                 {!hasScenario ? (
@@ -189,6 +194,10 @@ export default function GeneratePage({
                   <div className="generate-form-hint">请先到 LLM 配置页新增可用端点。</div>
                 ) : !selectedLlm?.apiKey || !selectedLlm?.baseUrl || !selectedLlm?.model ? (
                   <div className="generate-form-hint">当前所选 LLM 缺少 API Key、Base URL 或模型，请先补全配置。</div>
+                ) : !selectedPrompt ? (
+                  <div className="generate-form-hint">当前工作区还没有 Prompt 模板，将回退到系统内置 Prompt。</div>
+                ) : !selectedPrompt.systemPrompt.trim() ? (
+                  <div className="generate-form-hint">当前 Prompt 为空，将回退到系统内置 Prompt。</div>
                 ) : null}
               </div>
             </div>

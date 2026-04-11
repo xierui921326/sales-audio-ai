@@ -234,6 +234,21 @@
   padding-top: 10px;
 }
 
+.prompt-markdown-editor {
+  min-height: 420px;
+  padding: 18px 20px;
+  font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  resize: vertical;
+  background: var(--bg-primary);
+}
+
+.prompt-markdown-editor::placeholder {
+  color: var(--text-muted);
+}
+
 .group-card {
   padding: 10px;
   background: linear-gradient(180deg, #fff, #fbfdff);

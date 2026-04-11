@@ -86,6 +86,15 @@ struct TtsEndpointConfig {
     customer_voice: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PromptTemplate {
+    id: String,
+    title: String,
+    description: String,
+    system_prompt: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 struct AppConfig {
@@ -98,6 +107,9 @@ struct AppConfig {
     active_tts_id: String,
     #[serde(default)]
     tts_endpoints: Vec<TtsEndpointConfig>,
+
+    #[serde(default)]
+    active_prompt_id: String,
 
     #[serde(default)]
     audio_dir: String,
@@ -132,6 +144,8 @@ struct AppConfig {
 #[serde(rename_all = "camelCase")]
 struct WorkspaceData {
     config: AppConfig,
+    #[serde(default)]
+    prompts: Vec<PromptTemplate>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1043,6 +1057,15 @@ fn persist_workspace_to_db(app: &AppHandle, workspace: &WorkspaceData) -> Result
     Ok(())
 }
 
+fn default_prompt_templates() -> Vec<PromptTemplate> {
+    vec![PromptTemplate {
+        id: "default-prompt".into(),
+        title: "默认销售教练 Prompt".into(),
+        description: "通用销售对话生成模板，强调专业、自然和明确推进下一步。".into(),
+        system_prompt: "你是一名资深销售教练。请根据输入生成销售与客户的多轮中文对话。对话要自然、专业、克制，突出销售的推进能力与客户真实顾虑。严格返回 JSON 数组，不要额外解释。数组元素格式：{\"speaker\":\"sales|customer\",\"text\":\"...\"}；如果你的模型习惯输出 role/content，也必须确保 role 只使用 sales 或 customer。".into(),
+    }]
+}
+
 fn default_audio_dir(app: &AppHandle) -> Result<String, String> {
     Ok(app_data_dir(app)?.join("audio").to_string_lossy().to_string())
 }
@@ -1116,6 +1139,7 @@ fn default_config(app: &AppHandle) -> Result<AppConfig, String> {
             sales_voice: "zh-CN-YunxiNeural".into(),
             customer_voice: "zh-CN-XiaoxiaoNeural".into(),
         }],
+        active_prompt_id: "default-prompt".into(),
         audio_dir: default_audio_dir(app)?,
         database_path: resolved_database_path(app)?,
         config_file: resolved_config_file(),
@@ -1126,7 +1150,32 @@ fn default_config(app: &AppHandle) -> Result<AppConfig, String> {
 fn default_workspace(app: &AppHandle) -> Result<WorkspaceData, String> {
     Ok(WorkspaceData {
         config: default_config(app)?,
+        prompts: default_prompt_templates(),
     })
+}
+
+fn ensure_prompt_defaults(workspace: &mut WorkspaceData) -> bool {
+    let mut modified = false;
+
+    if workspace.prompts.is_empty() {
+        workspace.prompts = default_prompt_templates();
+        modified = true;
+    }
+
+    let active_prompt_exists = workspace
+        .prompts
+        .iter()
+        .any(|prompt| prompt.id == workspace.config.active_prompt_id);
+    if !active_prompt_exists {
+        workspace.config.active_prompt_id = workspace
+            .prompts
+            .first()
+            .map(|prompt| prompt.id.clone())
+            .unwrap_or_default();
+        modified = true;
+    }
+
+    modified
 }
 
 fn normalize_config_paths(app: &AppHandle, config: &mut AppConfig) -> Result<(), String> {
@@ -1160,8 +1209,14 @@ fn normalize_config_paths(app: &AppHandle, config: &mut AppConfig) -> Result<(),
 
 fn ensure_workspace(app: &AppHandle) -> Result<WorkspaceData, String> {
     if let Some(mut workspace) = load_workspace_from_db(app)? {
+        let before = serde_json::to_string(&workspace).map_err(|e| format!("序列化工作区失败: {e}"))?;
+        let mut modified = ensure_prompt_defaults(&mut workspace);
         normalize_config_paths(app, &mut workspace.config)?;
-        persist_workspace_to_db(app, &workspace)?;
+        let after = serde_json::to_string(&workspace).map_err(|e| format!("序列化工作区失败: {e}"))?;
+        modified = modified || before != after;
+        if modified {
+            persist_workspace_to_db(app, &workspace)?;
+        }
         remove_legacy_files_with_log(app, "desktop/src-tauri/src/lib.rs::ensure_workspace")?;
         return Ok(workspace);
     }
@@ -1212,6 +1267,9 @@ fn ensure_workspace(app: &AppHandle) -> Result<WorkspaceData, String> {
             sales_voice: workspace.config.sales_voice.clone(),
             customer_voice: workspace.config.customer_voice.clone(),
         });
+        modified = true;
+    }
+    if ensure_prompt_defaults(&mut workspace) {
         modified = true;
     }
 
@@ -2206,17 +2264,36 @@ fn save_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, String> {
         "desktop/src-tauri/src/lib.rs::save_config",
         "开始保存工作区配置",
         Some(format!(
-            "llm_count={} tts_count={} active_llm={} active_tts={}",
+            "llm_count={} tts_count={} active_llm={} active_tts={} active_prompt={}",
             config.llm_endpoints.len(),
             config.tts_endpoints.len(),
             config.active_llm_id,
-            config.active_tts_id
+            config.active_tts_id,
+            config.active_prompt_id
         )),
     );
     let mut workspace = ensure_workspace(&app)?;
     workspace.config = config.clone();
+    ensure_prompt_defaults(&mut workspace);
     save_workspace(&app, &workspace)?;
-    Ok(config)
+    Ok(workspace.config)
+}
+
+#[tauri::command]
+fn save_prompts(app: AppHandle, prompts: Vec<PromptTemplate>) -> Result<Vec<PromptTemplate>, String> {
+    write_backend_log(
+        &app,
+        "info",
+        "workspace",
+        "desktop/src-tauri/src/lib.rs::save_prompts",
+        "开始保存 Prompt 模板",
+        Some(format!("prompt_count={}", prompts.len())),
+    );
+    let mut workspace = ensure_workspace(&app)?;
+    workspace.prompts = prompts;
+    ensure_prompt_defaults(&mut workspace);
+    save_workspace(&app, &workspace)?;
+    Ok(workspace.prompts)
 }
 
 #[tauri::command]
@@ -2458,6 +2535,7 @@ pub fn run() {
             write_log,
             load_workspace,
             save_config,
+            save_prompts,
             list_llm_models,
             list_tts_voices,
             list_audio_files,
