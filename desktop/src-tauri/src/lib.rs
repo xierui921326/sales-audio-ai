@@ -1061,9 +1061,56 @@ fn default_prompt_templates() -> Vec<PromptTemplate> {
     vec![PromptTemplate {
         id: "default-prompt".into(),
         title: "默认销售教练 Prompt".into(),
-        description: "通用销售对话生成模板，强调专业、自然和明确推进下一步。".into(),
-        system_prompt: "你是一名资深销售教练。请根据输入生成销售与客户的多轮中文对话。对话要自然、专业、克制，突出销售的推进能力与客户真实顾虑。严格返回 JSON 数组，不要额外解释。数组元素格式：{\"speaker\":\"sales|customer\",\"text\":\"...\"}；如果你的模型习惯输出 role/content，也必须确保 role 只使用 sales 或 customer。".into(),
+        description: "通用销售对话生成模板，支持把当前场景、轮数和补充要求直接写入正文。".into(),
+        system_prompt: "你是一名资深销售对话教练，负责生成销售与客户之间的中文多轮模拟对话。
+
+# 对话背景
+- 当前场景：{{scenario}}
+- 目标轮数：{{rounds}}
+- 补充要求：{{supplementalPrompt}}
+
+# 生成目标
+请基于上面的真实业务场景，生成一段更贴近实际成交推进过程的销售对话。
+
+# 对话要求
+- 销售表达要专业、自然、克制，重点是理解客户、建立信任、推动下一步，而不是强行逼单
+- 客户要有真实反应，允许出现顾虑、犹豫、质疑、拖延、比较价格、暂时不想决定等情况，不能一直顺着销售
+- 对话要围绕场景逐步推进，每一轮都要承接上一轮的信息，不要重复空话
+- 销售需要结合客户反馈动态调整说法，可以做解释、追问、确认需求、弱推动、给出下一步建议
+- 不要出现明显机器人口吻，不要写成说明文，不要总结，不要加旁白
+- 不要承诺无法兑现的政策、收益或结果
+- 如果补充要求不为空，必须优先吸收进对话语气、推进方式和内容重点里
+
+# 输出格式
+- 严格返回 JSON 数组，不要输出 Markdown、代码块或任何额外解释
+- 每个元素必须是 {\"speaker\":\"sales|customer\",\"text\":\"...\"}
+- speaker 只能是 sales 或 customer
+- text 必须是自然中文口语，不要带序号或角色名前缀".into(),
     }]
+}
+
+fn render_system_prompt_template(template: &str, input: &GenerateConversationInput) -> String {
+    let replacements = [
+        ("scenario", input.scenario.trim()),
+        ("rounds", ""),
+        (
+            "supplementalPrompt",
+            input
+                .supplemental_prompt
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or(""),
+        ),
+    ];
+
+    let mut rendered = template.replace("{{rounds}}", &input.rounds.to_string());
+    for (key, value) in replacements {
+        if key == "rounds" {
+            continue;
+        }
+        rendered = rendered.replace(&format!("{{{{{key}}}}}"), value);
+    }
+    rendered
 }
 
 fn default_audio_dir(app: &AppHandle) -> Result<String, String> {
@@ -2007,9 +2054,10 @@ async fn call_remote_llm(app: &AppHandle, config: &AppConfig, input: &GenerateCo
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| format!("conversation-{}", Local::now().timestamp_millis()));
-    let system_prompt = input.system_prompt.clone().unwrap_or_else(|| {
+    let raw_system_prompt = input.system_prompt.clone().unwrap_or_else(|| {
         "你是一名资深销售教练。请根据输入生成销售与客户的多轮中文对话。严格返回 JSON 数组，不要额外解释。数组元素格式：{\"speaker\":\"sales|customer\",\"text\":\"...\"}；如果你的模型习惯输出 role/content，也必须确保 role 只使用 sales 或 customer。".into()
     });
+    let system_prompt = render_system_prompt_template(&raw_system_prompt, input);
 
     let supplemental_hint = supplemental_prompt
         .map(|value| format!("\n补充要求：{}", value))

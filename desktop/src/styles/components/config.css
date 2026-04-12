@@ -235,8 +235,8 @@
 }
 
 .prompt-markdown-editor {
-  height: 420px;
-  min-height: 420px;
+  height: 460px;
+  min-height: 460px;
   padding: 18px 20px;
   font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
   font-size: 14px;
@@ -256,6 +256,30 @@
   font-size: 12px;
   line-height: 1.6;
   color: var(--text-muted);
+}
+
+.prompt-variable-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.prompt-variable-chip {
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
+}
+
+.prompt-variable-chip:hover {
+  color: var(--accent-strong);
+  border-color: rgba(37, 99, 235, 0.28);
+  background: rgba(37, 99, 235, 0.08);
 }
 
 .group-card {
