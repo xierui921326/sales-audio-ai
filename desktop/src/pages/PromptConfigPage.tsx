@@ -44,30 +44,27 @@ export default function PromptConfigPage({ prompts, setPrompts, onSavePrompts, p
           <div className="config-form-wrapper">
             <div className="storage-card__header">
               <div className="storage-card__content">
-                <div className="storage-card__title">Prompt 模板</div>
-                <div className="storage-card__desc">使用 Markdown 风格编辑系统提示词，生成对话时会始终自动使用这里的内容。</div>
+                <div className="storage-card__title">Prompt</div>
+                <div className="storage-card__desc">直接编辑系统提示词，生成对话时会自动使用这里的内容。</div>
               </div>
             </div>
 
             <div className="config-form-stack">
               <div className="group-card config-form-stack__group-card">
                 <div className="field-block">
-                  <label>System Prompt Markdown</label>
+                  <label>Prompt 内容</label>
                   <textarea
                     className="field-control prompt-markdown-editor"
                     value={activePrompt.systemPrompt}
                     onChange={event => updatePrompt({ systemPrompt: event.target.value, title: '默认 Prompt 模板', description: '' })}
-                    placeholder={'例如：\n# 角色\n你是一名资深销售教练\n\n# 任务\n根据输入生成自然、专业、真实的中文销售对话\n\n# 输出要求\n- 严格返回 JSON 数组\n- 不要额外解释\n- speaker 只能是 sales 或 customer'}
+                    placeholder={'例如：\n# 角色\n你是一名资深销售教练\n\n# 任务\n根据输入生成自然、专业、真实的中文销售对话\n\n# 输出格式\n- 严格返回 JSON 数组\n- 不要额外解释\n- speaker 只能是 sales 或 customer'}
                     spellCheck={false}
                   />
                 </div>
               </div>
 
-              <div className="config-inline-action-bar config-inline-action-bar--inside-card">
-                <div className="config-inline-action-bar__text">
-                  支持按 Markdown 结构组织角色、目标、约束和输出格式；若正文留空，生成时会回退到系统内置 Prompt。
-                </div>
-              </div>
+              <div className="prompt-editor-note">支持直接输入 Markdown 风格内容；若正文留空，生成时会回退到系统内置 Prompt。</div>
+
 
               <div className="config-save-row">
                 <button className="btn-save" onClick={onSavePrompts} disabled={promptSaveState === 'saving'} type="button">

@@ -26,7 +26,6 @@
 }
 
 .page-stage {
-  padding: 12px;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
   gap: 10px;

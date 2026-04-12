@@ -235,6 +235,7 @@
 }
 
 .prompt-markdown-editor {
+  height: 420px;
   min-height: 420px;
   padding: 18px 20px;
   font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
@@ -242,10 +243,18 @@
   line-height: 1.7;
   white-space: pre-wrap;
   resize: vertical;
+  overflow-y: auto;
   background: var(--bg-primary);
 }
 
 .prompt-markdown-editor::placeholder {
+  color: var(--text-muted);
+}
+
+.prompt-editor-note {
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 1.6;
   color: var(--text-muted);
 }
 
