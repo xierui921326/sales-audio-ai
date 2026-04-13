@@ -414,6 +414,58 @@ const SSE_FRAME_SEPARATOR: &str = "\n\n";
 const FRAME_PREVIEW_LIMIT: usize = 240;
 const LOG_PAYLOAD_CHUNK_SIZE: usize = 2000;
 const LOG_PAYLOAD_CHUNK_THRESHOLD: usize = 2400;
+const TRANSCRIPT_SEGMENT_MIN_SECONDS: u32 = 2;
+const TRANSCRIPT_SEGMENT_MAX_SECONDS: u32 = 12;
+const TRANSCRIPT_CHARS_PER_SECOND: u32 = 6;
+const TRANSCRIPT_SEGMENT_GAP_SECONDS: u32 = 1;
+
+fn estimate_transcript_segment_seconds(text: &str) -> u32 {
+    let char_count = text.chars().count() as u32;
+    let estimated = char_count.div_ceil(TRANSCRIPT_CHARS_PER_SECOND);
+    estimated
+        .max(TRANSCRIPT_SEGMENT_MIN_SECONDS)
+        .min(TRANSCRIPT_SEGMENT_MAX_SECONDS)
+}
+
+fn build_transcript_timing(texts: &[String]) -> Vec<(u32, u32)> {
+    let mut current_start = 0u32;
+    texts
+        .iter()
+        .map(|text| {
+            let duration = estimate_transcript_segment_seconds(text);
+            let start_time = current_start;
+            let end_time = start_time + duration;
+            current_start = end_time + TRANSCRIPT_SEGMENT_GAP_SECONDS;
+            (start_time, end_time)
+        })
+        .collect()
+}
+
+fn transcript_row_text(row: &LlmTranscriptRow) -> String {
+    if !row.text.trim().is_empty() {
+        row.text.trim().to_string()
+    } else {
+        row.content.trim().to_string()
+    }
+}
+
+fn transcript_row_speaker(row: &LlmTranscriptRow) -> String {
+    if !row.speaker.trim().is_empty() {
+        normalize_llm_speaker(&row.speaker)
+    } else {
+        normalize_llm_speaker(&row.role)
+    }
+}
+
+fn validate_transcript_row(idx: usize, speaker: &str, text: &str) -> Result<(), String> {
+    if speaker != "sales" && speaker != "customer" {
+        return Err(format!("第 {} 条对话缺少合法 speaker/role 字段", idx + 1));
+    }
+    if text.is_empty() {
+        return Err(format!("第 {} 条对话缺少 text/content 字段", idx + 1));
+    }
+    Ok(())
+}
 
 fn split_log_chunks(value: &str, chunk_size: usize) -> Vec<String> {
     let mut chunks = Vec::new();
@@ -1243,6 +1295,20 @@ fn merged_audio_title() -> String {
     "合并音频".into()
 }
 
+fn transcript_total_duration_seconds(transcript: &[TranscriptSegment]) -> u32 {
+    transcript
+        .iter()
+        .map(|segment| segment.end_time)
+        .max()
+        .unwrap_or(0)
+}
+
+fn format_duration_mm_ss(total_seconds: u32) -> String {
+    let minutes = total_seconds / 60;
+    let seconds = total_seconds % 60;
+    format!("{:02}:{:02}", minutes, seconds)
+}
+
 #[tauri::command]
 fn list_audio_files(app: AppHandle) -> Result<Vec<AudioFileItem>, String> {
     load_audio_records(&app)
@@ -1822,10 +1888,6 @@ fn maybe_emit_remaining_partial_segments(
     Ok(())
 }
 
-fn preview_text(value: &str, limit: usize) -> String {
-    value.chars().take(limit).collect()
-}
-
 fn to_log_json<T: Serialize + ?Sized>(value: &T) -> String {
     serde_json::to_string_pretty(value)
         .unwrap_or_else(|error| format!("<serialize failed: {}>", error))
@@ -2171,38 +2233,36 @@ fn parse_llm_transcript_rows(content: &str) -> Result<Vec<TranscriptSegment>, St
         return Err("模型返回的对话为空".into());
     }
 
-    rows.into_iter()
+    let normalized_rows = rows
+        .into_iter()
         .enumerate()
         .map(|(idx, row)| {
-            let speaker = if !row.speaker.trim().is_empty() {
-                normalize_llm_speaker(&row.speaker)
-            } else {
-                normalize_llm_speaker(&row.role)
-            };
-            let text = if !row.text.trim().is_empty() {
-                row.text.trim().to_string()
-            } else {
-                row.content.trim().to_string()
-            };
-
-            if speaker != "sales" && speaker != "customer" {
-                return Err(format!("第 {} 条对话缺少合法 speaker/role 字段", idx + 1));
-            }
-            if text.is_empty() {
-                return Err(format!("第 {} 条对话缺少 text/content 字段", idx + 1));
-            }
-
-            Ok(TranscriptSegment {
-                id: (idx + 1).to_string(),
-                speaker,
-                text,
-                start_time: (idx as u32) * 4,
-                end_time: (idx as u32) * 4 + 4,
-                keywords: None,
-                is_partial: None,
-            })
+            let speaker = transcript_row_speaker(&row);
+            let text = transcript_row_text(&row);
+            validate_transcript_row(idx, &speaker, &text)?;
+            Ok((idx, speaker, text))
         })
-        .collect()
+        .collect::<Result<Vec<_>, String>>()?;
+
+    let texts = normalized_rows
+        .iter()
+        .map(|(_, _, text)| text.clone())
+        .collect::<Vec<_>>();
+    let timings = build_transcript_timing(&texts);
+
+    Ok(normalized_rows
+        .into_iter()
+        .zip(timings)
+        .map(|((idx, speaker, text), (start_time, end_time))| TranscriptSegment {
+            id: (idx + 1).to_string(),
+            speaker,
+            text,
+            start_time,
+            end_time,
+            keywords: None,
+            is_partial: None,
+        })
+        .collect())
 }
 
 async fn call_remote_llm(app: &AppHandle, config: &AppConfig, input: &GenerateConversationInput) -> Result<GenerateConversationOutput, String> {
@@ -2660,7 +2720,7 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
         role: "merged".into(),
         title: merged_audio_title(),
         file_name: merged_name,
-        duration: format!("00:{:02}", (input.transcript.len() as u32 * 4).min(59)),
+        duration: format_duration_mm_ss(transcript_total_duration_seconds(&input.transcript)),
         file_path: Some(merged_path.to_string_lossy().to_string()),
         text: Some(merged_text),
     };

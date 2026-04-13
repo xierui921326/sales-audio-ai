@@ -74,6 +74,16 @@ function decodeStreamingJsonText(value: string): string {
     .replace(/\\\\/g, '\\');
 }
 
+const FALLBACK_SEGMENT_MIN_SECONDS = 2;
+const FALLBACK_SEGMENT_MAX_SECONDS = 12;
+const FALLBACK_CHARS_PER_SECOND = 6;
+const FALLBACK_SEGMENT_GAP_SECONDS = 1;
+
+function estimateFallbackSegmentSeconds(text: string): number {
+  const estimated = Math.ceil(text.length / FALLBACK_CHARS_PER_SECOND);
+  return Math.min(FALLBACK_SEGMENT_MAX_SECONDS, Math.max(FALLBACK_SEGMENT_MIN_SECONDS, estimated));
+}
+
 function extractFallbackSegments(streamingText: string): TranscriptSegment[] {
   const speakerMatches = [...streamingText.matchAll(/"speaker"\s*:\s*"(sales|customer)"/g)];
   if (speakerMatches.length === 0) {
@@ -81,6 +91,7 @@ function extractFallbackSegments(streamingText: string): TranscriptSegment[] {
   }
 
   const fallbackSegments: TranscriptSegment[] = [];
+  let currentStartTime = 0;
 
   for (let index = 0; index < speakerMatches.length; index += 1) {
     const speakerMatch = speakerMatches[index];
@@ -126,12 +137,17 @@ function extractFallbackSegments(streamingText: string): TranscriptSegment[] {
       continue;
     }
 
+    const duration = estimateFallbackSegmentSeconds(text);
+    const startTime = currentStartTime;
+    const endTime = startTime + duration;
+    currentStartTime = endTime + FALLBACK_SEGMENT_GAP_SECONDS;
+
     fallbackSegments.push({
       id: `fallback-${index}`,
       speaker,
       text,
-      startTime: index,
-      endTime: index,
+      startTime,
+      endTime,
       isPartial: true,
     });
   }
