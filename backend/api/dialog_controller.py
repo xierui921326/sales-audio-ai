@@ -37,6 +37,7 @@ async def generate_dialog(
     req: GenerateRequest, db: Session = Depends(get_db)
 ) -> GenerateResponse:
     """生成多轮销售对话并存库。"""
+    logger.info(f"收到生成对话请求: {req.model_dump()}")
     task = DialogTask(
         industry=req.industry,
         scene=req.scene,
@@ -68,13 +69,16 @@ async def generate_dialog(
 
         task.status = "done"
         db.commit()
-        logger.info(f"任务 {task.id} 对话生成完成，共 {len(lines)} 条")
+        response_data = GenerateResponse(task_id=task.id, message="对话生成成功")
+        logger.info(
+            f"任务 {task.id} 对话生成完成，共 {len(lines)} 条, response={response_data.model_dump()}"
+        )
     except Exception as e:
         task.status = "failed"
         db.commit()
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    return GenerateResponse(task_id=task.id, message="对话生成成功")
+    return response_data
 
 
 class ScriptOut(BaseModel):

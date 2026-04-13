@@ -412,7 +412,70 @@ const DEFAULT_ANTHROPIC_MAX_TOKENS: u32 = 4096;
 const OPENAI_STREAM_DONE_SENTINEL: &str = "[DONE]";
 const SSE_FRAME_SEPARATOR: &str = "\n\n";
 const FRAME_PREVIEW_LIMIT: usize = 240;
-const RAW_CONTENT_PREVIEW_LIMIT: usize = 180;
+const LOG_PAYLOAD_CHUNK_SIZE: usize = 2000;
+const LOG_PAYLOAD_CHUNK_THRESHOLD: usize = 2400;
+
+fn split_log_chunks(value: &str, chunk_size: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    let mut current_len = 0usize;
+
+    for ch in value.chars() {
+        current.push(ch);
+        current_len += 1;
+        if current_len >= chunk_size {
+            chunks.push(std::mem::take(&mut current));
+            current_len = 0;
+        }
+    }
+
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+
+    if chunks.is_empty() {
+        chunks.push(String::new());
+    }
+
+    chunks
+}
+
+fn write_backend_log_line(
+    app: &AppHandle,
+    level: &str,
+    scope: &str,
+    location: &str,
+    message: &str,
+    payload: Option<&str>,
+) {
+    let payload_suffix = payload
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!(" | {}", value))
+        .unwrap_or_default();
+    let console_line = format!(
+        "[sales-audio-ai][{}][{}][{}][{}] {}{}",
+        format_log_timestamp(),
+        level,
+        scope,
+        location,
+        message,
+        payload_suffix
+    );
+    match level {
+        "error" => eprintln!("{}", console_line),
+        "warn" => eprintln!("{}", console_line),
+        _ => println!("{}", console_line),
+    }
+
+    if let Err(error) = append_local_log(app, level, scope, Some(location), message, payload) {
+        eprintln!(
+            "[sales-audio-ai][{}][error][backend:logger][desktop/src-tauri/src/lib.rs] 写入本地日志失败 | {}",
+            format_log_timestamp(),
+            error
+        );
+    }
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -867,29 +930,50 @@ fn write_backend_log(
     let caller = Location::caller();
     let normalized_scope = normalize_log_scope(scope);
     let normalized_location = normalize_log_location(&normalized_scope, Some(&backend_log_location(caller)));
-    let payload_text = payload.as_deref();
-    let payload_suffix = payload_text
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| format!(" | {}", value))
-        .unwrap_or_default();
-    let console_line = format!(
-        "[sales-audio-ai][{}][{}][{}][{}] {}{}",
-        format_log_timestamp(),
-        level,
-        normalized_scope,
-        normalized_location,
-        message,
-        payload_suffix
-    );
-    match level {
-        "error" => eprintln!("{}", console_line),
-        "warn" => eprintln!("{}", console_line),
-        _ => println!("{}", console_line),
-    }
+    let payload = payload
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
 
-    if let Err(error) = append_local_log(app, level, &normalized_scope, Some(&normalized_location), message, payload_text) {
-        eprintln!("[sales-audio-ai][{}][error][backend:logger][desktop/src-tauri/src/lib.rs] 写入本地日志失败 | {}", format_log_timestamp(), error);
+    match payload {
+        Some(payload_text) if payload_text.chars().count() > LOG_PAYLOAD_CHUNK_THRESHOLD => {
+            let chunks = split_log_chunks(&payload_text, LOG_PAYLOAD_CHUNK_SIZE);
+            let total = chunks.len();
+            for (index, chunk) in chunks.into_iter().enumerate() {
+                let chunk_message = if index == 0 {
+                    format!("{} [part {}/{}]", message, index + 1, total)
+                } else {
+                    format!("{} [cont {}/{}]", message, index + 1, total)
+                };
+                write_backend_log_line(
+                    app,
+                    level,
+                    &normalized_scope,
+                    &normalized_location,
+                    &chunk_message,
+                    Some(&chunk),
+                );
+            }
+        }
+        Some(payload_text) => {
+            write_backend_log_line(
+                app,
+                level,
+                &normalized_scope,
+                &normalized_location,
+                message,
+                Some(&payload_text),
+            );
+        }
+        None => {
+            write_backend_log_line(
+                app,
+                level,
+                &normalized_scope,
+                &normalized_location,
+                message,
+                None,
+            );
+        }
     }
 }
 
@@ -1742,6 +1826,55 @@ fn preview_text(value: &str, limit: usize) -> String {
     value.chars().take(limit).collect()
 }
 
+fn to_log_json<T: Serialize + ?Sized>(value: &T) -> String {
+    serde_json::to_string_pretty(value)
+        .unwrap_or_else(|error| format!("<serialize failed: {}>", error))
+}
+
+fn mask_secret(value: &str) -> String {
+    if value.is_empty() {
+        return String::new();
+    }
+
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() <= 8 {
+        return "*".repeat(chars.len());
+    }
+
+    let prefix: String = chars.iter().take(4).collect();
+    let suffix: String = chars.iter().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+    format!("{}***{}", prefix, suffix)
+}
+
+fn sanitize_headers_for_log(headers: &[(impl AsRef<str>, String)]) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    for (key, value) in headers {
+        let key_ref = key.as_ref();
+        let masked_value = match key_ref.to_ascii_lowercase().as_str() {
+            "authorization" => {
+                let trimmed = value.trim();
+                if let Some(token) = trimmed.strip_prefix("Bearer ") {
+                    format!("Bearer {}", mask_secret(token))
+                } else {
+                    mask_secret(trimmed)
+                }
+            }
+            "x-api-key" | "xi-api-key" => mask_secret(value.trim()),
+            _ => value.clone(),
+        };
+        map.insert(key_ref.to_string(), serde_json::Value::String(masked_value));
+    }
+    serde_json::Value::Object(map)
+}
+
+fn build_log_payload(fields: &[(&str, serde_json::Value)]) -> String {
+    let mut map = serde_json::Map::new();
+    for (key, value) in fields {
+        map.insert((*key).to_string(), value.clone());
+    }
+    to_log_json(&serde_json::Value::Object(map))
+}
+
 fn build_remote_model_error_text(response_text: &str) -> String {
     if response_text.trim().is_empty() {
         "远程模型返回失败，且响应体为空".into()
@@ -1757,13 +1890,15 @@ fn log_remote_model_failure(app: &AppHandle, endpoint_id: &str, protocol: LlmStr
         "llm",
         "desktop/src-tauri/src/lib.rs::call_remote_llm",
         "远程模型返回失败",
-        Some(format!(
-            "endpoint={} protocol={} status={} body={}",
-            endpoint_id,
-            protocol_name(protocol),
-            status,
-            text
-        )),
+        Some(build_log_payload(&[
+            ("endpoint", serde_json::Value::String(endpoint_id.to_string())),
+            (
+                "protocol",
+                serde_json::Value::String(protocol_name(protocol).to_string()),
+            ),
+            ("status", serde_json::Value::Number(serde_json::Number::from(status.as_u16()))),
+            ("body", serde_json::Value::String(text.to_string())),
+        ])),
     );
 }
 
@@ -1775,12 +1910,14 @@ fn log_unparsed_stream_preview(app: &AppHandle, endpoint_id: &str, protocol: Llm
         "desktop/src-tauri/src/lib.rs::call_remote_llm",
         "流式响应未解析出文本增量",
         unmatched_frame_preview.map(|preview| {
-            format!(
-                "endpoint={} protocol={} frame={}",
-                endpoint_id,
-                protocol_name(protocol),
-                preview
-            )
+            build_log_payload(&[
+                ("endpoint", serde_json::Value::String(endpoint_id.to_string())),
+                (
+                    "protocol",
+                    serde_json::Value::String(protocol_name(protocol).to_string()),
+                ),
+                ("frame", serde_json::Value::String(preview)),
+            ])
         }),
     );
 }
@@ -1792,30 +1929,84 @@ fn log_raw_model_content(app: &AppHandle, endpoint_id: &str, protocol: LlmStream
         "llm",
         "desktop/src-tauri/src/lib.rs::call_remote_llm",
         "收到模型原始内容",
-        Some(format!(
-            "endpoint={} protocol={} preview={}",
-            endpoint_id,
-            protocol_name(protocol),
-            preview_text(content, RAW_CONTENT_PREVIEW_LIMIT)
-        )),
+        Some(build_log_payload(&[
+            ("endpoint", serde_json::Value::String(endpoint_id.to_string())),
+            (
+                "protocol",
+                serde_json::Value::String(protocol_name(protocol).to_string()),
+            ),
+            ("content", serde_json::Value::String(content.to_string())),
+        ])),
     );
 }
 
-fn log_transcript_parse_success(app: &AppHandle, endpoint_id: &str, protocol: LlmStreamProtocol, row_count: usize) {
+fn log_generate_conversation_request(app: &AppHandle, input: &GenerateConversationInput) {
+    write_backend_log(
+        app,
+        "info",
+        "generate",
+        "desktop/src-tauri/src/lib.rs::generate_conversation",
+        "开始生成对话",
+        Some(build_log_payload(&[(
+            "request",
+            serde_json::to_value(input).unwrap_or_else(|error| {
+                serde_json::Value::String(format!("<serialize failed: {}>", error))
+            }),
+        )])),
+    );
+}
+
+fn log_transcript_parse_success(
+    app: &AppHandle,
+    endpoint_id: &str,
+    protocol: LlmStreamProtocol,
+    transcript: &[TranscriptSegment],
+) {
     write_backend_log(
         app,
         "info",
         "llm",
         "desktop/src-tauri/src/lib.rs::call_remote_llm",
         "对话解析成功",
-        Some(format!(
-            "endpoint={} protocol={} rows={}",
-            endpoint_id,
-            protocol_name(protocol),
-            row_count
-        )),
+        Some(build_log_payload(&[
+            ("endpoint", serde_json::Value::String(endpoint_id.to_string())),
+            (
+                "protocol",
+                serde_json::Value::String(protocol_name(protocol).to_string()),
+            ),
+            (
+                "rows",
+                serde_json::Value::Number(serde_json::Number::from(transcript.len())),
+            ),
+            (
+                "transcript",
+                serde_json::to_value(transcript).unwrap_or_else(|error| {
+                    serde_json::Value::String(format!("<serialize failed: {}>", error))
+                }),
+            ),
+        ])),
     );
 }
+
+fn log_generate_conversation_result(app: &AppHandle, request_id: &str, output: &GenerateConversationOutput) {
+    write_backend_log(
+        app,
+        "info",
+        "generate",
+        "desktop/src-tauri/src/lib.rs::generate_conversation",
+        "生成对话成功",
+        Some(build_log_payload(&[
+            ("requestId", serde_json::Value::String(request_id.to_string())),
+            (
+                "response",
+                serde_json::to_value(output).unwrap_or_else(|error| {
+                    serde_json::Value::String(format!("<serialize failed: {}>", error))
+                }),
+            ),
+        ])),
+    );
+}
+
 
 fn apply_request_headers(
     request: reqwest::RequestBuilder,
@@ -1826,23 +2017,35 @@ fn apply_request_headers(
 
 fn build_llm_request_log_payload(
     llm_config: &LlmEndpointConfig,
-    scenario_len: usize,
-    rounds: u32,
+    input: &GenerateConversationInput,
     request_id: &str,
     protocol: LlmStreamProtocol,
     url: &str,
+    headers: &[(&'static str, String)],
+    request_body: &serde_json::Value,
 ) -> String {
-    format!(
-        "endpoint={} provider={} protocol={} url={} model={} scenario_len={} rounds={} request_id={}",
-        llm_config.id,
-        llm_config.provider,
-        protocol_name(protocol),
-        url,
-        llm_config.model,
-        scenario_len,
-        rounds,
-        request_id
-    )
+    build_log_payload(&[
+        ("endpoint", serde_json::Value::String(llm_config.id.clone())),
+        ("provider", serde_json::Value::String(llm_config.provider.clone())),
+        (
+            "protocol",
+            serde_json::Value::String(protocol_name(protocol).to_string()),
+        ),
+        ("url", serde_json::Value::String(url.to_string())),
+        ("model", serde_json::Value::String(llm_config.model.clone())),
+        ("requestId", serde_json::Value::String(request_id.to_string())),
+        (
+            "headers",
+            sanitize_headers_for_log(headers),
+        ),
+        (
+            "input",
+            serde_json::to_value(input).unwrap_or_else(|error| {
+                serde_json::Value::String(format!("<serialize failed: {}>", error))
+            }),
+        ),
+        ("body", request_body.clone()),
+    ])
 }
 
 fn emit_conversation_started(app: &AppHandle, request_id: &str, rounds: u32) -> Result<(), String> {
@@ -2071,11 +2274,12 @@ async fn call_remote_llm(app: &AppHandle, config: &AppConfig, input: &GenerateCo
     let request_payload = build_llm_request_payload(llm_config, &system_prompt, &user_prompt)?;
     let request_log = build_llm_request_log_payload(
         llm_config,
-        scenario.chars().count(),
-        input.rounds,
+        input,
         &request_id,
         request_payload.protocol,
         &request_payload.url,
+        &request_payload.headers,
+        &request_payload.body,
     );
 
     write_backend_log(
@@ -2139,13 +2343,16 @@ async fn call_remote_llm(app: &AppHandle, config: &AppConfig, input: &GenerateCo
     let transcript = normalize_final_transcript(parse_llm_transcript_rows(content)?);
     let task_info = streaming_task_info(scenario);
 
-    log_transcript_parse_success(app, &llm_config.id, request_payload.protocol, transcript.len());
+    log_transcript_parse_success(app, &llm_config.id, request_payload.protocol, &transcript);
     emit_conversation_completed(app, &request_id, &transcript, &task_info)?;
 
-    Ok(GenerateConversationOutput {
+    let output = GenerateConversationOutput {
         transcript,
         task_info,
-    })
+    };
+    log_generate_conversation_result(app, &request_id, &output);
+
+    Ok(output)
 }
 
 fn build_export_text(transcript: &[TranscriptSegment], audio_files: &[AudioFileItem]) -> String {
@@ -2346,18 +2553,7 @@ fn save_prompts(app: AppHandle, prompts: Vec<PromptTemplate>) -> Result<Vec<Prom
 
 #[tauri::command]
 async fn generate_conversation(app: AppHandle, input: GenerateConversationInput) -> Result<GenerateConversationOutput, String> {
-    write_backend_log(
-        &app,
-        "info",
-        "generate",
-        "desktop/src-tauri/src/lib.rs::generate_conversation",
-        "开始生成对话",
-        Some(format!(
-            "rounds={} llm_endpoint_id={}",
-            input.rounds,
-            input.llm_endpoint_id.clone().unwrap_or_default()
-        )),
-    );
+    log_generate_conversation_request(&app, &input);
     let workspace = ensure_workspace(&app)?;
     call_remote_llm(&app, &workspace.config, &input).await
 }

@@ -53,28 +53,30 @@ class LLMService:
         Raises:
             RuntimeError: 当 API 调用失败时抛出。
         """
-        logger.info(f"调用 LLM: model={settings.llm_model}, prompt_len={len(prompt)}")
+        request_payload = {
+            "model": settings.llm_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.8,
+            "max_tokens": 2048,
+        }
+        logger.info(
+            f"调用 LLM: model={settings.llm_model}, prompt_len={len(prompt)}, request={request_payload}"
+        )
         try:
             if AsyncOpenAI is not None:
-                response = await self._client.chat.completions.create(
-                    model=settings.llm_model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.8,
-                    max_tokens=2048,
-                )
+                response = await self._client.chat.completions.create(**request_payload)
                 text = response.choices[0].message.content or ""
+                response_payload = response.model_dump()
             else:
-                response = await self._client.ChatCompletion.acreate(
-                    model=settings.llm_model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.8,
-                    max_tokens=2048,
-                )
+                response = await self._client.ChatCompletion.acreate(**request_payload)
                 text = response["choices"][0]["message"].get("content", "") or ""
-            logger.info(f"LLM 返回: {len(text)} 字符")
+                response_payload = response
+            logger.info(
+                f"LLM 返回: text_len={len(text)}, response={response_payload}"
+            )
             return text
         except Exception as e:
-            logger.error(f"LLM 调用失败: {e}")
+            logger.error(f"LLM 调用失败: request={request_payload}, error={e}")
             raise RuntimeError(f"LLM 调用失败: {e}") from e
 
 
