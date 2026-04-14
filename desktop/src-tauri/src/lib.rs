@@ -42,7 +42,11 @@ struct AudioFileItem {
     role: String,
     title: String,
     file_name: String,
+    display_name: Option<String>,
     duration: String,
+    duration_seconds: Option<u32>,
+    start_time: Option<u32>,
+    end_time: Option<u32>,
     file_path: Option<String>,
     text: Option<String>,
 }
@@ -1052,6 +1056,7 @@ fn open_workspace_db(app: &AppHandle) -> Result<Connection, String> {
             role TEXT NOT NULL,
             title TEXT NOT NULL,
             file_name TEXT NOT NULL,
+            display_name TEXT,
             file_path TEXT NOT NULL,
             duration TEXT NOT NULL DEFAULT '',
             text TEXT,
@@ -1060,6 +1065,15 @@ fn open_workspace_db(app: &AppHandle) -> Result<Connection, String> {
         [],
     )
     .map_err(|e| format!("初始化音频记录表失败: {e}"))?;
+    conn.execute("ALTER TABLE audio_records ADD COLUMN display_name TEXT", [])
+        .or_else(|err| {
+            if matches!(err, rusqlite::Error::SqliteFailure(_, Some(ref message)) if message.contains("duplicate column name")) {
+                Ok(0)
+            } else {
+                Err(err)
+            }
+        })
+        .map_err(|e| format!("迁移音频记录表失败: {e}"))?;
     cleanup_legacy_storage(&conn).map_err(|e| format!("清理遗留表失败: {e}"))?;
     Ok(conn)
 }
@@ -1120,14 +1134,15 @@ fn persist_audio_record(app: &AppHandle, batch_id: &str, audio: &AudioFileItem) 
     let conn = open_workspace_db(app)?;
     conn.execute(
         "INSERT INTO audio_records(
-            id, batch_id, role, title, file_name, file_path, duration, text, created_at
-        ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            id, batch_id, role, title, file_name, display_name, file_path, duration, text, created_at
+        ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             audio.id,
             batch_id,
             audio.role,
             audio.title,
             audio.file_name,
+            audio.display_name,
             audio.file_path.clone().unwrap_or_default(),
             audio.duration,
             audio.text,
@@ -1142,7 +1157,7 @@ fn load_audio_records(app: &AppHandle) -> Result<Vec<AudioFileItem>, String> {
     let conn = open_workspace_db(app)?;
     let mut stmt = conn
         .prepare(
-            "SELECT id, role, title, file_name, file_path, duration, text
+            "SELECT id, role, title, file_name, display_name, file_path, duration, text
              FROM audio_records
              ORDER BY created_at DESC, rowid DESC",
         )
@@ -1155,15 +1170,67 @@ fn load_audio_records(app: &AppHandle) -> Result<Vec<AudioFileItem>, String> {
                 role: row.get(1)?,
                 title: row.get(2)?,
                 file_name: row.get(3)?,
-                file_path: Some(row.get::<_, String>(4)?),
-                duration: row.get(5)?,
-                text: row.get(6)?,
+                display_name: row.get(4)?,
+                file_path: Some(row.get::<_, String>(5)?),
+                duration: row.get(6)?,
+                duration_seconds: None,
+                start_time: None,
+                end_time: None,
+                text: row.get(7)?,
             })
         })
         .map_err(|e| format!("读取音频记录失败: {e}"))?;
 
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|e| format!("解析音频记录失败: {e}"))
+}
+
+#[tauri::command]
+fn update_audio_display_name(app: AppHandle, id: String, display_name: String) -> Result<AudioFileItem, String> {
+    let trimmed_display_name = display_name.trim().to_string();
+    if trimmed_display_name.is_empty() {
+        return Err("备注名称不能为空".into());
+    }
+    if trimmed_display_name.chars().count() > 60 {
+        return Err("备注名称不能超过 60 个字符".into());
+    }
+
+    let conn = open_workspace_db(&app)?;
+    conn.execute(
+        "UPDATE audio_records
+         SET display_name = ?1
+         WHERE id = ?2 AND role = 'merged'",
+        params![trimmed_display_name, id],
+    )
+    .map_err(|e| format!("更新音频备注失败: {e}"))?;
+
+    let updated = conn
+        .query_row(
+            "SELECT id, role, title, file_name, display_name, file_path, duration, text
+             FROM audio_records
+             WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok(AudioFileItem {
+                    id: row.get(0)?,
+                    role: row.get(1)?,
+                    title: row.get(2)?,
+                    file_name: row.get(3)?,
+                    display_name: row.get(4)?,
+                    file_path: Some(row.get::<_, String>(5)?),
+                    duration: row.get(6)?,
+                    duration_seconds: None,
+                    start_time: None,
+                    end_time: None,
+                    text: row.get(7)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|e| format!("读取更新后的音频失败: {e}"))?
+        .ok_or_else(|| "未找到对应的音频记录".to_string())?;
+
+    Ok(updated)
 }
 
 fn load_workspace_from_db(app: &AppHandle) -> Result<Option<WorkspaceData>, String> {
@@ -2715,12 +2782,17 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
         Some(format!("provider={} ext=wav path={}", tts_config.provider, merged_path.to_string_lossy())),
     );
 
+    let merged_duration_seconds = transcript_total_duration_seconds(&input.transcript);
     let merged_file = AudioFileItem {
         id: format!("audio-merged-{}", batch_id),
         role: "merged".into(),
         title: merged_audio_title(),
         file_name: merged_name,
-        duration: format_duration_mm_ss(transcript_total_duration_seconds(&input.transcript)),
+        display_name: None,
+        duration: format_duration_mm_ss(merged_duration_seconds),
+        duration_seconds: Some(merged_duration_seconds),
+        start_time: Some(0),
+        end_time: Some(merged_duration_seconds),
         file_path: Some(merged_path.to_string_lossy().to_string()),
         text: Some(merged_text),
     };
@@ -2843,6 +2915,7 @@ pub fn run() {
             list_llm_models,
             list_tts_voices,
             list_audio_files,
+            update_audio_display_name,
             generate_conversation,
             generate_audio,
             export_zip,

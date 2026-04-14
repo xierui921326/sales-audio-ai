@@ -183,6 +183,11 @@ type GenerateDialogState = {
   tone: 'error' | 'info' | 'success';
 } | null;
 
+type SaveNoticeState = {
+  text: string;
+  tone: 'success' | 'info';
+} | null;
+
 export default function App() {
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [activeNav, setActiveNav] = useState<NavigationItemId>('generate');
@@ -195,6 +200,10 @@ export default function App() {
   });
   const [audioFiles, setAudioFiles] = useState<AudioFileItem[]>([]);
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [currentDuration, setCurrentDuration] = useState(0);
+  const [loadingAudioId, setLoadingAudioId] = useState<string | null>(null);
   const [configSaveState, setConfigSaveState] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const [configLoaded, setConfigLoaded] = useState(false);
   const [savedConfigSnapshot, setSavedConfigSnapshot] = useState<AppConfig>(DEFAULT_CONFIG);
@@ -202,6 +211,7 @@ export default function App() {
   const [savedPromptsSnapshot, setSavedPromptsSnapshot] = useState<PromptTemplate[]>(DEFAULT_PROMPTS);
   const [promptSaveState, setPromptSaveState] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const [generateDialog, setGenerateDialog] = useState<GenerateDialogState>(null);
+  const [saveNotice, setSaveNotice] = useState<SaveNoticeState>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioObjectUrlRef = useRef<string | null>(null);
   const generateRequestIdRef = useRef<string | null>(null);
@@ -264,19 +274,207 @@ export default function App() {
       }
     };
 
-    const handleEnded = () => {
+    const resetPlaybackState = () => {
       setPlayingId(null);
+      setIsPlaying(false);
+      setCurrentTime(0);
+      setCurrentDuration(0);
+      setLoadingAudioId(null);
+    };
+
+    const handleLoadedMetadata = () => {
+      setCurrentDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
+      setCurrentTime(audio.currentTime);
+      setLoadingAudioId(null);
+    };
+
+    const handleTimeUpdate = () => {
+      setCurrentTime(audio.currentTime);
+    };
+
+    const handlePause = () => {
+      if (!audio.ended) {
+        setIsPlaying(false);
+      }
+    };
+
+    const handlePlay = () => {
+      setIsPlaying(true);
+      setLoadingAudioId(null);
+    };
+
+    const handleEnded = () => {
+      resetPlaybackState();
+      audio.removeAttribute('src');
+      audio.load();
       revokeAudioObjectUrl();
     };
 
+    audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+    audio.addEventListener('timeupdate', handleTimeUpdate);
+    audio.addEventListener('pause', handlePause);
+    audio.addEventListener('play', handlePlay);
     audio.addEventListener('ended', handleEnded);
     return () => {
       audio.pause();
+      audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      audio.removeEventListener('timeupdate', handleTimeUpdate);
+      audio.removeEventListener('pause', handlePause);
+      audio.removeEventListener('play', handlePlay);
       audio.removeEventListener('ended', handleEnded);
       revokeAudioObjectUrl();
       audioRef.current = null;
     };
   }, []);
+
+  function resetAudioPlayback() {
+    const player = audioRef.current;
+    if (!player) {
+      setPlayingId(null);
+      setIsPlaying(false);
+      setCurrentTime(0);
+      setCurrentDuration(0);
+      setLoadingAudioId(null);
+      return;
+    }
+
+    player.pause();
+    player.currentTime = 0;
+    player.removeAttribute('src');
+    player.load();
+    if (audioObjectUrlRef.current) {
+      URL.revokeObjectURL(audioObjectUrlRef.current);
+      audioObjectUrlRef.current = null;
+    }
+    setPlayingId(null);
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setCurrentDuration(0);
+    setLoadingAudioId(null);
+  }
+
+  function formatAudioMimeType(target: string): string {
+    const ext = target.split('.').pop()?.toLowerCase();
+    return ext === 'mp3' ? 'audio/mpeg' : 'audio/wav';
+  }
+
+  async function loadAudioSource(target: string): Promise<string> {
+    const audioBytes = await readFile(target);
+    const audioBlob = new Blob([audioBytes], { type: formatAudioMimeType(target) });
+    return URL.createObjectURL(audioBlob);
+  }
+
+  function updateAudioFile(updated: AudioFileItem) {
+    setAudioFiles(current => current.map(file => (file.id === updated.id ? { ...file, ...updated } : file)));
+  }
+
+  function showSaveNotice(text: string, tone: 'success' | 'info' = 'success') {
+    setSaveNotice({ text, tone });
+  }
+
+  async function handleSaveAudioDisplayName(id: string, displayName: string) {
+    try {
+      const updated = await invoke<AudioFileItem>('update_audio_display_name', {
+        id,
+        displayName,
+      });
+      updateAudioFile(updated);
+      showSaveNotice('备注名称已保存');
+      logger.info('audio', '音频备注更新成功', { id, displayName: updated.displayName });
+    } catch (err) {
+      logger.error('audio', '音频备注更新失败', err);
+      setGenerateDialog({
+        title: '备注保存失败',
+        text: err instanceof Error ? err.message : String(err),
+        tone: 'error',
+      });
+      throw err;
+    }
+  }
+
+  function handleSeek(id: string, nextTime: number) {
+    const player = audioRef.current;
+    if (!player || playingId !== id) {
+      return;
+    }
+    const safeTime = Math.max(0, Math.min(nextTime, currentDuration || 0));
+    player.currentTime = safeTime;
+    setCurrentTime(safeTime);
+  }
+
+  function handleSkip(id: string, deltaSeconds: number) {
+    if (playingId !== id) {
+      return;
+    }
+    handleSeek(id, currentTime + deltaSeconds);
+  }
+
+  function formatPlaybackDuration(file: AudioFileItem): number {
+    if (playingId === file.id && currentDuration > 0) {
+      return currentDuration;
+    }
+    return file.durationSeconds ?? file.endTime ?? 0;
+  }
+
+  async function handlePlay(id: string) {
+    const player = audioRef.current;
+    const target = audioFiles.find(file => file.id === id)?.filePath;
+    if (!player || !target) {
+      logger.warn('audio', '未找到可播放的音频路径', { id });
+      return;
+    }
+
+    if (playingId === id) {
+      if (player.paused) {
+        try {
+          await player.play();
+          setIsPlaying(true);
+        } catch (err) {
+          logger.error('audio', '恢复播放失败', err);
+          setGenerateDialog({
+            title: '播放失败',
+            text: err instanceof Error ? err.message : String(err),
+            tone: 'error',
+          });
+        }
+      } else {
+        player.pause();
+        setIsPlaying(false);
+      }
+      return;
+    }
+
+    try {
+      setLoadingAudioId(id);
+      const audioUrl = await loadAudioSource(target);
+
+      player.pause();
+      if (audioObjectUrlRef.current) {
+        URL.revokeObjectURL(audioObjectUrlRef.current);
+      }
+      audioObjectUrlRef.current = audioUrl;
+      player.src = audioUrl;
+      player.currentTime = 0;
+      setPlayingId(id);
+      setCurrentTime(0);
+      setCurrentDuration(0);
+      await player.play();
+      setIsPlaying(true);
+      logger.info('audio', '开始播放音频', { id, target });
+    } catch (err) {
+      resetAudioPlayback();
+      logger.error('audio', '播放音频失败', err);
+      setGenerateDialog({
+        title: '播放失败',
+        text: err instanceof Error ? err.message : String(err),
+        tone: 'error',
+      });
+    }
+  }
+
+  function isAudioActive(id: string): boolean {
+    return playingId === id;
+  }
 
   async function reloadAudioFiles() {
     try {
@@ -356,6 +554,20 @@ export default function App() {
       setConfigSaveState('idle');
     }
   }, [config, configSaveState]);
+
+  useEffect(() => {
+    if (!saveNotice) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setSaveNotice(current => (current?.text === saveNotice.text ? null : current));
+    }, 1800);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [saveNotice]);
 
   async function handleSavePrompts() {
     if (!configLoaded) {
@@ -510,13 +722,9 @@ export default function App() {
         },
       });
       await reloadAudioFiles();
-      setPlayingId(null);
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.currentTime = 0;
-      }
+      resetAudioPlayback();
       logger.info('audio', '音频生成成功', {
-        fileCount: 1,
+        fileCount: result.audioFiles.length,
         mergedFile: result.mergedFile.fileName,
       });
     } catch (err) {
@@ -528,61 +736,6 @@ export default function App() {
       });
     } finally {
       setBusy(current => ({ ...current, generatingAudio: false }));
-    }
-  }
-
-  async function handlePlay(id: string) {
-    const player = audioRef.current;
-    const target = audioFiles.find(file => file.id === id)?.filePath;
-    if (!player || !target) {
-      logger.warn('audio', '未找到可播放的音频路径', { id });
-      return;
-    }
-
-    const revokeAudioObjectUrl = () => {
-      if (audioObjectUrlRef.current) {
-        URL.revokeObjectURL(audioObjectUrlRef.current);
-        audioObjectUrlRef.current = null;
-      }
-    };
-
-    if (playingId === id) {
-      player.pause();
-      player.currentTime = 0;
-      player.removeAttribute('src');
-      player.load();
-      revokeAudioObjectUrl();
-      setPlayingId(null);
-      return;
-    }
-
-    try {
-      const audioBytes = await readFile(target);
-      const ext = target.split('.').pop()?.toLowerCase();
-      const mimeType = ext === 'mp3' ? 'audio/mpeg' : 'audio/wav';
-      const audioBlob = new Blob([audioBytes], { type: mimeType });
-      const audioUrl = URL.createObjectURL(audioBlob);
-
-      player.pause();
-      revokeAudioObjectUrl();
-      audioObjectUrlRef.current = audioUrl;
-      player.src = audioUrl;
-      player.currentTime = 0;
-      await player.play();
-      setPlayingId(id);
-      logger.info('audio', '开始播放音频', { id, target });
-    } catch (err) {
-      player.pause();
-      player.removeAttribute('src');
-      player.load();
-      revokeAudioObjectUrl();
-      setPlayingId(null);
-      logger.error('audio', '播放音频失败', err);
-      setGenerateDialog({
-        title: '播放失败',
-        text: err instanceof Error ? err.message : String(err),
-        tone: 'error',
-      });
     }
   }
 
@@ -603,7 +756,14 @@ export default function App() {
               streamingText={streamingText}
               audioFiles={audioFiles}
               playingId={playingId}
+              isPlaying={isPlaying}
+              currentTime={currentTime}
+              currentDuration={currentDuration}
+              loadingAudioId={loadingAudioId}
               onPlay={handlePlay}
+              onSeek={handleSeek}
+              onSkip={handleSkip}
+              onSaveAudioDisplayName={handleSaveAudioDisplayName}
               onGenerateConv={handleGenerateConversation}
               onGenerateAudio={handleGenerateAudio}
               onSaveConfig={handleSaveConfig}
@@ -617,6 +777,8 @@ export default function App() {
           </main>
         </div>
       </div>
+
+      {saveNotice ? <div className={`save-notice save-notice--${saveNotice.tone}`}>{saveNotice.text}</div> : null}
 
       {generateDialog ? (
         <div className="dialog-overlay" onClick={() => setGenerateDialog(null)}>
@@ -649,7 +811,14 @@ interface MainContentProps {
   streamingText: string;
   audioFiles: AudioFileItem[];
   playingId: string | null;
-  onPlay: (id: string) => void;
+  isPlaying: boolean;
+  currentTime: number;
+  currentDuration: number;
+  loadingAudioId: string | null;
+  onPlay: (id: string) => Promise<void>;
+  onSeek: (id: string, nextTime: number) => void;
+  onSkip: (id: string, deltaSeconds: number) => void;
+  onSaveAudioDisplayName: (id: string, displayName: string) => Promise<void>;
   onGenerateConv: (params: GenerateConversationInput) => Promise<void>;
   onGenerateAudio: () => Promise<void>;
   onSaveConfig: () => Promise<void>;
@@ -661,7 +830,7 @@ interface MainContentProps {
   busy: GenerateBusyState;
 }
 
-function MainContent({ activeNav, config, setConfig, savedConfigSnapshot, prompts, setPrompts, transcript, streamingText, audioFiles, playingId, onPlay, onGenerateConv, onGenerateAudio, onSaveConfig, onSavePrompts, configSaveState, promptSaveState, hasUnsavedChanges, hasUnsavedPromptChanges, busy }: MainContentProps) {
+function MainContent({ activeNav, config, setConfig, savedConfigSnapshot, prompts, setPrompts, transcript, streamingText, audioFiles, playingId, isPlaying, currentTime, currentDuration, loadingAudioId, onPlay, onSeek, onSkip, onSaveAudioDisplayName, onGenerateConv, onGenerateAudio, onSaveConfig, onSavePrompts, configSaveState, promptSaveState, hasUnsavedChanges, hasUnsavedPromptChanges, busy }: MainContentProps) {
   switch (activeNav) {
     case 'generate':
       return <GeneratePage config={config} prompts={prompts} transcript={transcript} streamingText={streamingText} onGenerate={onGenerateConv} onGenerateAudio={onGenerateAudio} busy={busy} />;
@@ -669,7 +838,19 @@ function MainContent({ activeNav, config, setConfig, savedConfigSnapshot, prompt
       return (
         <div className="page-view flex-col animate-fade-in">
           <StorageHeader config={config} setConfig={setConfig} />
-          <AudioPage audioFiles={audioFiles} playingId={playingId} onPlay={onPlay} busy={busy.generatingAudio} />
+          <AudioPage
+            audioFiles={audioFiles}
+            playingId={playingId}
+            isPlaying={isPlaying}
+            currentTime={currentTime}
+            currentDuration={currentDuration}
+            loadingAudioId={loadingAudioId}
+            onPlay={onPlay}
+            onSeek={onSeek}
+            onSkip={onSkip}
+            onSaveDisplayName={onSaveAudioDisplayName}
+            busy={busy.generatingAudio}
+          />
         </div>
       );
     case 'llm':

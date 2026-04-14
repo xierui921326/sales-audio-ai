@@ -34,7 +34,11 @@ export interface AudioFileItem {
     role: 'sales' | 'customer' | 'merged';
     title: string;
     fileName: string;
+    displayName?: string;
     duration: string;
+    durationSeconds?: number;
+    startTime?: number;
+    endTime?: number;
     filePath?: string;
     text?: string;
 }
