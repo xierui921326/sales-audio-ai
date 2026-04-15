@@ -43,6 +43,39 @@ export interface AudioFileItem {
     text?: string;
 }
 
+export type AudioGenerationTaskStatus = 'pending' | 'processing' | 'partial_failed' | 'completed';
+export type AudioGenerationSegmentStatus = 'pending' | 'processing' | 'succeeded' | 'failed';
+
+export interface AudioGenerationSegmentItem {
+    id: string;
+    segmentIndex: number;
+    speaker: string;
+    text: string;
+    status: AudioGenerationSegmentStatus;
+    fileName?: string;
+    filePath?: string;
+    errorMessage?: string;
+    attemptCount: number;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface AudioGenerationTaskItem {
+    id: string;
+    batchId: string;
+    status: AudioGenerationTaskStatus;
+    audioDir: string;
+    ttsEndpointId: string;
+    totalSegments: number;
+    successSegments: number;
+    failedSegments: number;
+    mergedAudioRecordId?: string;
+    lastError?: string;
+    createdAt: string;
+    updatedAt: string;
+    segments: AudioGenerationSegmentItem[];
+}
+
 export interface StatusCheckItem {
     label: string;
     status: 'ready' | 'connected' | 'warning';
@@ -167,8 +200,9 @@ export interface GenerateAudioInput {
 }
 
 export interface GenerateAudioOutput {
+    task: AudioGenerationTaskItem;
     audioFiles: AudioFileItem[];
-    mergedFile: AudioFileItem;
+    mergedFile?: AudioFileItem;
 }
 
 export interface HealthStatus {

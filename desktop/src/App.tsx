@@ -16,9 +16,11 @@ import {
   AppConfig,
   TranscriptSegment,
   AudioFileItem,
+  AudioGenerationTaskItem,
   WorkspaceData,
   GenerateConversationInput,
   GenerateConversationOutput,
+  GenerateAudioOutput,
   GenerateBusyState,
   PromptTemplate,
   ConversationStartedEvent,
@@ -188,6 +190,19 @@ type SaveNoticeState = {
   tone: 'success' | 'info';
 } | null;
 
+function padDatePart(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+function formatDateTimeCN(value: string): string {
+  const date = new Date(value.replace(' ', 'T'));
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${padDatePart(date.getHours())}:${padDatePart(date.getMinutes())}:${padDatePart(date.getSeconds())}`;
+}
+
 export default function App() {
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [activeNav, setActiveNav] = useState<NavigationItemId>('generate');
@@ -199,6 +214,7 @@ export default function App() {
     generatingAudio: false,
   });
   const [audioFiles, setAudioFiles] = useState<AudioFileItem[]>([]);
+  const [audioGenerationTasks, setAudioGenerationTasks] = useState<AudioGenerationTaskItem[]>([]);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -476,6 +492,16 @@ export default function App() {
     return playingId === id;
   }
 
+  async function reloadAudioGenerationTasks() {
+    try {
+      const tasks = await invoke<AudioGenerationTaskItem[]>('list_audio_generation_tasks');
+      setAudioGenerationTasks(tasks);
+      logger.info('audio', '音频任务加载完成', { taskCount: tasks.length });
+    } catch (err) {
+      logger.error('audio', '加载音频任务失败', err);
+    }
+  }
+
   async function reloadAudioFiles() {
     try {
       const records = await invoke<AudioFileItem[]>('list_audio_files');
@@ -484,6 +510,10 @@ export default function App() {
     } catch (err) {
       logger.error('audio', '加载音频历史失败', err);
     }
+  }
+
+  async function reloadAudioGenerationResources() {
+    await Promise.all([reloadAudioFiles(), reloadAudioGenerationTasks()]);
   }
 
   function clearGenerateListeners() {
@@ -511,7 +541,7 @@ export default function App() {
         setSavedConfigSnapshot(workspace.config);
         setPrompts(workspace.prompts);
         setSavedPromptsSnapshot(workspace.prompts);
-        await reloadAudioFiles();
+        await reloadAudioGenerationResources();
         logger.info('app', '工作区加载完成', {
           llmCount: workspace.config.llmEndpoints.length,
           ttsCount: workspace.config.ttsEndpoints.length,
@@ -713,7 +743,7 @@ export default function App() {
     setBusy(current => ({ ...current, generatingAudio: true }));
     try {
       logger.info('audio', '开始生成音频', { transcriptSize: transcript.length });
-      const result = await invoke<{ audioFiles: AudioFileItem[]; mergedFile: AudioFileItem }>('generate_audio', {
+      const result = await invoke<GenerateAudioOutput>('generate_audio', {
         input: {
           transcript,
           salesVoice: '',
@@ -721,16 +751,80 @@ export default function App() {
           audioDir: config.audioDir,
         },
       });
-      await reloadAudioFiles();
+      await reloadAudioGenerationResources();
       resetAudioPlayback();
-      logger.info('audio', '音频生成成功', {
-        fileCount: result.audioFiles.length,
-        mergedFile: result.mergedFile.fileName,
+
+      if (result.task.status === 'completed') {
+        logger.info('audio', '音频生成成功', {
+          taskId: result.task.id,
+          fileCount: result.audioFiles.length,
+          mergedFile: result.mergedFile?.fileName ?? '',
+        });
+        setGenerateDialog({
+          title: '音频生成完成',
+          text: `已完成 ${result.task.successSegments}/${result.task.totalSegments} 个片段，并生成合并音频。`,
+          tone: 'success',
+        });
+        return;
+      }
+
+      logger.warn('audio', '音频生成部分失败', {
+        taskId: result.task.id,
+        successSegments: result.task.successSegments,
+        failedSegments: result.task.failedSegments,
+      });
+      setGenerateDialog({
+        title: '部分片段生成失败',
+        text: `已成功 ${result.task.successSegments}/${result.task.totalSegments} 个片段，剩余失败片段可在下方任务列表中重试。`,
+        tone: 'info',
       });
     } catch (err) {
       logger.error('audio', '音频生成失败', err);
       setGenerateDialog({
         title: '音频生成失败',
+        text: err instanceof Error ? err.message : String(err),
+        tone: 'error',
+      });
+    } finally {
+      setBusy(current => ({ ...current, generatingAudio: false }));
+    }
+  }
+
+  async function handleRetryAudioTask(taskId: string) {
+    setBusy(current => ({ ...current, generatingAudio: true }));
+    try {
+      logger.info('audio', '开始重试音频任务', { taskId });
+      const result = await invoke<GenerateAudioOutput>('retry_audio_generation_task', { taskId });
+      await reloadAudioGenerationResources();
+      resetAudioPlayback();
+
+      if (result.task.status === 'completed') {
+        logger.info('audio', '音频任务重试完成', {
+          taskId,
+          mergedFile: result.mergedFile?.fileName ?? '',
+        });
+        setGenerateDialog({
+          title: '重试完成',
+          text: `任务已完成，${result.task.totalSegments} 个片段均已生成。`,
+          tone: 'success',
+        });
+        return;
+      }
+
+      logger.warn('audio', '音频任务重试后仍有失败片段', {
+        taskId,
+        successSegments: result.task.successSegments,
+        failedSegments: result.task.failedSegments,
+      });
+      setGenerateDialog({
+        title: '仍有失败片段',
+        text: `当前已成功 ${result.task.successSegments}/${result.task.totalSegments} 个片段，请稍后继续重试。`,
+        tone: 'info',
+      });
+    } catch (err) {
+      logger.error('audio', '重试音频任务失败', err);
+      setGenerateDialog({
+        title: '重试失败',
         text: err instanceof Error ? err.message : String(err),
         tone: 'error',
       });
@@ -755,6 +849,7 @@ export default function App() {
               transcript={displayTranscript}
               streamingText={streamingText}
               audioFiles={audioFiles}
+              audioGenerationTasks={audioGenerationTasks}
               playingId={playingId}
               isPlaying={isPlaying}
               currentTime={currentTime}
@@ -766,6 +861,8 @@ export default function App() {
               onSaveAudioDisplayName={handleSaveAudioDisplayName}
               onGenerateConv={handleGenerateConversation}
               onGenerateAudio={handleGenerateAudio}
+              onRetryAudioTask={handleRetryAudioTask}
+              formatTaskTime={formatDateTimeCN}
               onSaveConfig={handleSaveConfig}
               onSavePrompts={handleSavePrompts}
               configSaveState={configSaveState}
@@ -810,6 +907,7 @@ interface MainContentProps {
   transcript: TranscriptSegment[];
   streamingText: string;
   audioFiles: AudioFileItem[];
+  audioGenerationTasks: AudioGenerationTaskItem[];
   playingId: string | null;
   isPlaying: boolean;
   currentTime: number;
@@ -821,6 +919,8 @@ interface MainContentProps {
   onSaveAudioDisplayName: (id: string, displayName: string) => Promise<void>;
   onGenerateConv: (params: GenerateConversationInput) => Promise<void>;
   onGenerateAudio: () => Promise<void>;
+  onRetryAudioTask: (taskId: string) => Promise<void>;
+  formatTaskTime: (value: string) => string;
   onSaveConfig: () => Promise<void>;
   onSavePrompts: () => Promise<void>;
   configSaveState: 'idle' | 'saving' | 'success' | 'error';
@@ -830,10 +930,10 @@ interface MainContentProps {
   busy: GenerateBusyState;
 }
 
-function MainContent({ activeNav, config, setConfig, savedConfigSnapshot, prompts, setPrompts, transcript, streamingText, audioFiles, playingId, isPlaying, currentTime, currentDuration, loadingAudioId, onPlay, onSeek, onSkip, onSaveAudioDisplayName, onGenerateConv, onGenerateAudio, onSaveConfig, onSavePrompts, configSaveState, promptSaveState, hasUnsavedChanges, hasUnsavedPromptChanges, busy }: MainContentProps) {
+function MainContent({ activeNav, config, setConfig, savedConfigSnapshot, prompts, setPrompts, transcript, streamingText, audioFiles, audioGenerationTasks, playingId, isPlaying, currentTime, currentDuration, loadingAudioId, onPlay, onSeek, onSkip, onSaveAudioDisplayName, onGenerateConv, onGenerateAudio, onRetryAudioTask, formatTaskTime, onSaveConfig, onSavePrompts, configSaveState, promptSaveState, hasUnsavedChanges, hasUnsavedPromptChanges, busy }: MainContentProps) {
   switch (activeNav) {
     case 'generate':
-      return <GeneratePage config={config} prompts={prompts} transcript={transcript} streamingText={streamingText} onGenerate={onGenerateConv} onGenerateAudio={onGenerateAudio} busy={busy} />;
+      return <GeneratePage config={config} prompts={prompts} transcript={transcript} streamingText={streamingText} audioGenerationTasks={audioGenerationTasks} onGenerate={onGenerateConv} onGenerateAudio={onGenerateAudio} onRetryAudioTask={onRetryAudioTask} formatTaskTime={formatTaskTime} busy={busy} />;
     case 'audio':
       return (
         <div className="page-view flex-col animate-fade-in">

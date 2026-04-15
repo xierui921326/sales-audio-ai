@@ -1,5 +1,5 @@
 use chrono::Local;
-use futures_util::StreamExt;
+use futures_util::{stream, StreamExt};
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -192,8 +192,103 @@ struct GenerateAudioInput {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GenerateAudioOutput {
+    task: AudioGenerationTaskItem,
     audio_files: Vec<AudioFileItem>,
-    merged_file: AudioFileItem,
+    merged_file: Option<AudioFileItem>,
+}
+
+const AUDIO_TASK_STATUS_PENDING: &str = "pending";
+const AUDIO_TASK_STATUS_PROCESSING: &str = "processing";
+const AUDIO_TASK_STATUS_PARTIAL_FAILED: &str = "partial_failed";
+const AUDIO_TASK_STATUS_COMPLETED: &str = "completed";
+
+const AUDIO_SEGMENT_STATUS_PENDING: &str = "pending";
+const AUDIO_SEGMENT_STATUS_PROCESSING: &str = "processing";
+const AUDIO_SEGMENT_STATUS_SUCCEEDED: &str = "succeeded";
+const AUDIO_SEGMENT_STATUS_FAILED: &str = "failed";
+
+const AUDIO_TTS_CONCURRENCY: usize = 3;
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct AudioGenerationSegmentItem {
+    id: String,
+    segment_index: u32,
+    speaker: String,
+    text: String,
+    status: String,
+    file_name: Option<String>,
+    file_path: Option<String>,
+    error_message: Option<String>,
+    attempt_count: u32,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct AudioGenerationTaskItem {
+    id: String,
+    batch_id: String,
+    status: String,
+    audio_dir: String,
+    tts_endpoint_id: String,
+    total_segments: u32,
+    success_segments: u32,
+    failed_segments: u32,
+    merged_audio_record_id: Option<String>,
+    last_error: Option<String>,
+    created_at: String,
+    updated_at: String,
+    segments: Vec<AudioGenerationSegmentItem>,
+}
+
+#[derive(Debug, Clone)]
+struct AudioGenerationTaskState {
+    id: String,
+    batch_id: String,
+    status: String,
+    audio_dir: String,
+    tts_endpoint_id: String,
+    transcript: Vec<TranscriptSegment>,
+    total_segments: u32,
+    success_segments: u32,
+    failed_segments: u32,
+    merged_audio_record_id: Option<String>,
+    last_error: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Clone)]
+struct AudioGenerationJob {
+    segment_id: String,
+    segment_index: u32,
+    speaker: String,
+    text: String,
+    file_name: String,
+    file_path: PathBuf,
+    attempt_count: u32,
+}
+
+#[derive(Debug)]
+struct AudioGenerationTaskSummary {
+    total_segments: u32,
+    success_segments: u32,
+    failed_segments: u32,
+}
+
+#[derive(Debug)]
+struct AudioGenerationProcessResult {
+    task: AudioGenerationTaskItem,
+    merged_file: Option<AudioFileItem>,
+}
+
+#[derive(Debug)]
+struct AudioGenerationJobResult {
+    job: AudioGenerationJob,
+    bytes: Option<Vec<u8>>,
+    error_message: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -766,13 +861,8 @@ fn is_mp3_audio(bytes: &[u8]) -> bool {
     bytes.starts_with(b"ID3") || (bytes.len() >= 2 && bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0)
 }
 
-async fn synthesize_audio_bytes(app: &AppHandle, config: &AppConfig, speaker: &str, text: &str) -> Result<Vec<u8>, String> {
-    let tts_config = config
-        .tts_endpoints
-        .iter()
-        .find(|e| e.id == config.active_tts_id)
-        .or_else(|| config.tts_endpoints.first())
-        .ok_or_else(|| "没有可用的 TTS 配置".to_string())?;
+async fn synthesize_audio_bytes(app: &AppHandle, config: &AppConfig, tts_endpoint_id: &str, speaker: &str, text: &str) -> Result<Vec<u8>, String> {
+    let tts_config = resolve_tts_endpoint(config, tts_endpoint_id)?;
 
     let voice = if speaker == "sales" {
         tts_config.sales_voice.as_str()
@@ -1065,6 +1155,44 @@ fn open_workspace_db(app: &AppHandle) -> Result<Connection, String> {
         [],
     )
     .map_err(|e| format!("初始化音频记录表失败: {e}"))?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS audio_generation_tasks (
+            id TEXT PRIMARY KEY,
+            batch_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            audio_dir TEXT NOT NULL,
+            tts_endpoint_id TEXT NOT NULL,
+            transcript_json TEXT NOT NULL,
+            total_segments INTEGER NOT NULL DEFAULT 0,
+            success_segments INTEGER NOT NULL DEFAULT 0,
+            failed_segments INTEGER NOT NULL DEFAULT 0,
+            merged_audio_record_id TEXT,
+            last_error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+        [],
+    )
+    .map_err(|e| format!("初始化音频任务表失败: {e}"))?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS audio_generation_segments (
+            id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            segment_index INTEGER NOT NULL,
+            speaker TEXT NOT NULL,
+            text TEXT NOT NULL,
+            status TEXT NOT NULL,
+            file_name TEXT,
+            file_path TEXT,
+            error_message TEXT,
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(task_id, segment_index)
+        )",
+        [],
+    )
+    .map_err(|e| format!("初始化音频任务分段表失败: {e}"))?;
     conn.execute("ALTER TABLE audio_records ADD COLUMN display_name TEXT", [])
         .or_else(|err| {
             if matches!(err, rusqlite::Error::SqliteFailure(_, Some(ref message)) if message.contains("duplicate column name")) {
@@ -1151,6 +1279,610 @@ fn persist_audio_record(app: &AppHandle, batch_id: &str, audio: &AudioFileItem) 
     )
     .map_err(|e| format!("写入音频记录失败: {e}"))?;
     Ok(())
+}
+
+fn resolve_tts_endpoint<'a>(config: &'a AppConfig, tts_endpoint_id: &str) -> Result<&'a TtsEndpointConfig, String> {
+    let target_id = if tts_endpoint_id.trim().is_empty() {
+        config.active_tts_id.as_str()
+    } else {
+        tts_endpoint_id.trim()
+    };
+
+    config
+        .tts_endpoints
+        .iter()
+        .find(|endpoint| endpoint.id == target_id)
+        .or_else(|| config.tts_endpoints.first())
+        .ok_or_else(|| "没有可用的 TTS 配置".to_string())
+}
+
+fn load_audio_record_by_id_from_conn(conn: &Connection, id: &str) -> Result<Option<AudioFileItem>, String> {
+    conn.query_row(
+        "SELECT id, role, title, file_name, display_name, file_path, duration, text
+         FROM audio_records
+         WHERE id = ?1",
+        params![id],
+        |row| {
+            Ok(AudioFileItem {
+                id: row.get(0)?,
+                role: row.get(1)?,
+                title: row.get(2)?,
+                file_name: row.get(3)?,
+                display_name: row.get(4)?,
+                file_path: Some(row.get::<_, String>(5)?),
+                duration: row.get(6)?,
+                duration_seconds: None,
+                start_time: None,
+                end_time: None,
+                text: row.get(7)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|e| format!("读取音频记录失败: {e}"))
+}
+
+fn load_audio_record_by_id(app: &AppHandle, id: &str) -> Result<Option<AudioFileItem>, String> {
+    let conn = open_workspace_db(app)?;
+    load_audio_record_by_id_from_conn(&conn, id)
+}
+
+fn load_audio_generation_segments_from_conn(conn: &Connection, task_id: &str) -> Result<Vec<AudioGenerationSegmentItem>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, segment_index, speaker, text, status, file_name, file_path, error_message, attempt_count, created_at, updated_at
+             FROM audio_generation_segments
+             WHERE task_id = ?1
+             ORDER BY segment_index ASC, rowid ASC",
+        )
+        .map_err(|e| format!("查询音频任务分段失败: {e}"))?;
+
+    let mut rows = stmt
+        .query(params![task_id])
+        .map_err(|e| format!("读取音频任务分段失败: {e}"))?;
+    let mut segments = Vec::new();
+
+    while let Some(row) = rows.next().map_err(|e| format!("读取音频任务分段失败: {e}"))? {
+        segments.push(AudioGenerationSegmentItem {
+            id: row.get(0).map_err(|e| format!("解析音频任务分段失败: {e}"))?,
+            segment_index: row.get::<_, i64>(1).map_err(|e| format!("解析音频任务分段失败: {e}"))? as u32,
+            speaker: row.get(2).map_err(|e| format!("解析音频任务分段失败: {e}"))?,
+            text: row.get(3).map_err(|e| format!("解析音频任务分段失败: {e}"))?,
+            status: row.get(4).map_err(|e| format!("解析音频任务分段失败: {e}"))?,
+            file_name: row.get(5).map_err(|e| format!("解析音频任务分段失败: {e}"))?,
+            file_path: row.get(6).map_err(|e| format!("解析音频任务分段失败: {e}"))?,
+            error_message: row.get(7).map_err(|e| format!("解析音频任务分段失败: {e}"))?,
+            attempt_count: row.get::<_, i64>(8).map_err(|e| format!("解析音频任务分段失败: {e}"))? as u32,
+            created_at: row.get(9).map_err(|e| format!("解析音频任务分段失败: {e}"))?,
+            updated_at: row.get(10).map_err(|e| format!("解析音频任务分段失败: {e}"))?,
+        });
+    }
+
+    Ok(segments)
+}
+
+fn load_audio_generation_task_state_from_conn(conn: &Connection, task_id: &str) -> Result<AudioGenerationTaskState, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, batch_id, status, audio_dir, tts_endpoint_id, transcript_json, total_segments, success_segments, failed_segments, merged_audio_record_id, last_error, created_at, updated_at
+             FROM audio_generation_tasks
+             WHERE id = ?1
+             LIMIT 1",
+        )
+        .map_err(|e| format!("查询音频任务失败: {e}"))?;
+    let mut rows = stmt
+        .query(params![task_id])
+        .map_err(|e| format!("读取音频任务失败: {e}"))?;
+    let row = rows
+        .next()
+        .map_err(|e| format!("读取音频任务失败: {e}"))?
+        .ok_or_else(|| "未找到对应的音频任务".to_string())?;
+
+    let transcript_json: String = row.get(5).map_err(|e| format!("解析音频任务失败: {e}"))?;
+    let transcript = serde_json::from_str::<Vec<TranscriptSegment>>(&transcript_json)
+        .map_err(|e| format!("解析音频任务 transcript 失败: {e}"))?;
+
+    Ok(AudioGenerationTaskState {
+        id: row.get(0).map_err(|e| format!("解析音频任务失败: {e}"))?,
+        batch_id: row.get(1).map_err(|e| format!("解析音频任务失败: {e}"))?,
+        status: row.get(2).map_err(|e| format!("解析音频任务失败: {e}"))?,
+        audio_dir: row.get(3).map_err(|e| format!("解析音频任务失败: {e}"))?,
+        tts_endpoint_id: row.get(4).map_err(|e| format!("解析音频任务失败: {e}"))?,
+        transcript,
+        total_segments: row.get::<_, i64>(6).map_err(|e| format!("解析音频任务失败: {e}"))? as u32,
+        success_segments: row.get::<_, i64>(7).map_err(|e| format!("解析音频任务失败: {e}"))? as u32,
+        failed_segments: row.get::<_, i64>(8).map_err(|e| format!("解析音频任务失败: {e}"))? as u32,
+        merged_audio_record_id: row.get(9).map_err(|e| format!("解析音频任务失败: {e}"))?,
+        last_error: row.get(10).map_err(|e| format!("解析音频任务失败: {e}"))?,
+        created_at: row.get(11).map_err(|e| format!("解析音频任务失败: {e}"))?,
+        updated_at: row.get(12).map_err(|e| format!("解析音频任务失败: {e}"))?,
+    })
+}
+
+fn load_audio_generation_task_state(app: &AppHandle, task_id: &str) -> Result<AudioGenerationTaskState, String> {
+    let conn = open_workspace_db(app)?;
+    load_audio_generation_task_state_from_conn(&conn, task_id)
+}
+
+fn build_audio_generation_task_item_from_conn(conn: &Connection, task_state: AudioGenerationTaskState) -> Result<AudioGenerationTaskItem, String> {
+    let segments = load_audio_generation_segments_from_conn(conn, &task_state.id)?;
+    Ok(AudioGenerationTaskItem {
+        id: task_state.id,
+        batch_id: task_state.batch_id,
+        status: task_state.status,
+        audio_dir: task_state.audio_dir,
+        tts_endpoint_id: task_state.tts_endpoint_id,
+        total_segments: task_state.total_segments,
+        success_segments: task_state.success_segments,
+        failed_segments: task_state.failed_segments,
+        merged_audio_record_id: task_state.merged_audio_record_id,
+        last_error: task_state.last_error,
+        created_at: task_state.created_at,
+        updated_at: task_state.updated_at,
+        segments,
+    })
+}
+
+fn load_audio_generation_task_item(app: &AppHandle, task_id: &str) -> Result<AudioGenerationTaskItem, String> {
+    let conn = open_workspace_db(app)?;
+    let task_state = load_audio_generation_task_state_from_conn(&conn, task_id)?;
+    build_audio_generation_task_item_from_conn(&conn, task_state)
+}
+
+fn list_audio_generation_task_states_from_conn(conn: &Connection) -> Result<Vec<AudioGenerationTaskState>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, batch_id, status, audio_dir, tts_endpoint_id, transcript_json, total_segments, success_segments, failed_segments, merged_audio_record_id, last_error, created_at, updated_at
+             FROM audio_generation_tasks
+             ORDER BY updated_at DESC, rowid DESC",
+        )
+        .map_err(|e| format!("查询音频任务列表失败: {e}"))?;
+    let mut rows = stmt.query([]).map_err(|e| format!("读取音频任务列表失败: {e}"))?;
+    let mut tasks = Vec::new();
+
+    while let Some(row) = rows.next().map_err(|e| format!("读取音频任务列表失败: {e}"))? {
+        let transcript_json: String = row.get(5).map_err(|e| format!("解析音频任务列表失败: {e}"))?;
+        let transcript = serde_json::from_str::<Vec<TranscriptSegment>>(&transcript_json)
+            .map_err(|e| format!("解析音频任务 transcript 失败: {e}"))?;
+        tasks.push(AudioGenerationTaskState {
+            id: row.get(0).map_err(|e| format!("解析音频任务列表失败: {e}"))?,
+            batch_id: row.get(1).map_err(|e| format!("解析音频任务列表失败: {e}"))?,
+            status: row.get(2).map_err(|e| format!("解析音频任务列表失败: {e}"))?,
+            audio_dir: row.get(3).map_err(|e| format!("解析音频任务列表失败: {e}"))?,
+            tts_endpoint_id: row.get(4).map_err(|e| format!("解析音频任务列表失败: {e}"))?,
+            transcript,
+            total_segments: row.get::<_, i64>(6).map_err(|e| format!("解析音频任务列表失败: {e}"))? as u32,
+            success_segments: row.get::<_, i64>(7).map_err(|e| format!("解析音频任务列表失败: {e}"))? as u32,
+            failed_segments: row.get::<_, i64>(8).map_err(|e| format!("解析音频任务列表失败: {e}"))? as u32,
+            merged_audio_record_id: row.get(9).map_err(|e| format!("解析音频任务列表失败: {e}"))?,
+            last_error: row.get(10).map_err(|e| format!("解析音频任务列表失败: {e}"))?,
+            created_at: row.get(11).map_err(|e| format!("解析音频任务列表失败: {e}"))?,
+            updated_at: row.get(12).map_err(|e| format!("解析音频任务列表失败: {e}"))?,
+        });
+    }
+
+    Ok(tasks)
+}
+
+fn summarize_audio_generation_task_from_conn(conn: &Connection, task_id: &str) -> Result<AudioGenerationTaskSummary, String> {
+    conn.query_row(
+        "SELECT COUNT(*),
+                COALESCE(SUM(CASE WHEN status = ?2 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = ?3 THEN 1 ELSE 0 END), 0)
+         FROM audio_generation_segments
+         WHERE task_id = ?1",
+        params![task_id, AUDIO_SEGMENT_STATUS_SUCCEEDED, AUDIO_SEGMENT_STATUS_FAILED],
+        |row| {
+            Ok(AudioGenerationTaskSummary {
+                total_segments: row.get::<_, i64>(0)? as u32,
+                success_segments: row.get::<_, i64>(1)? as u32,
+                failed_segments: row.get::<_, i64>(2)? as u32,
+            })
+        },
+    )
+    .map_err(|e| format!("汇总音频任务状态失败: {e}"))
+}
+
+fn refresh_audio_generation_task(
+    app: &AppHandle,
+    task_id: &str,
+    status: &str,
+    merged_audio_record_id: Option<&str>,
+    last_error: Option<&str>,
+) -> Result<AudioGenerationTaskItem, String> {
+    let conn = open_workspace_db(app)?;
+    let summary = summarize_audio_generation_task_from_conn(&conn, task_id)?;
+    conn.execute(
+        "UPDATE audio_generation_tasks
+         SET status = ?1,
+             total_segments = ?2,
+             success_segments = ?3,
+             failed_segments = ?4,
+             merged_audio_record_id = ?5,
+             last_error = ?6,
+             updated_at = ?7
+         WHERE id = ?8",
+        params![
+            status,
+            summary.total_segments,
+            summary.success_segments,
+            summary.failed_segments,
+            merged_audio_record_id,
+            last_error,
+            now_text(),
+            task_id,
+        ],
+    )
+    .map_err(|e| format!("更新音频任务状态失败: {e}"))?;
+
+    let task_state = load_audio_generation_task_state_from_conn(&conn, task_id)?;
+    build_audio_generation_task_item_from_conn(&conn, task_state)
+}
+
+fn create_audio_generation_task(
+    app: &AppHandle,
+    batch_id: &str,
+    audio_dir: &str,
+    tts_endpoint_id: &str,
+    transcript: &[TranscriptSegment],
+    jobs: &[AudioGenerationJob],
+) -> Result<AudioGenerationTaskItem, String> {
+    let conn = open_workspace_db(app)?;
+    let task_id = format!("audio-task-{batch_id}");
+    let created_at = now_text();
+    let transcript_json = serde_json::to_string(transcript).map_err(|e| format!("序列化音频任务 transcript 失败: {e}"))?;
+
+    conn.execute(
+        "INSERT INTO audio_generation_tasks(
+            id, batch_id, status, audio_dir, tts_endpoint_id, transcript_json, total_segments, success_segments, failed_segments, merged_audio_record_id, last_error, created_at, updated_at
+        ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, 0, NULL, NULL, ?8, ?8)",
+        params![
+            task_id,
+            batch_id,
+            AUDIO_TASK_STATUS_PENDING,
+            audio_dir,
+            tts_endpoint_id,
+            transcript_json,
+            jobs.len() as u32,
+            created_at,
+        ],
+    )
+    .map_err(|e| format!("创建音频任务失败: {e}"))?;
+
+    for job in jobs {
+        conn.execute(
+            "INSERT INTO audio_generation_segments(
+                id, task_id, segment_index, speaker, text, status, file_name, file_path, error_message, attempt_count, created_at, updated_at
+            ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL, ?8, ?9, ?9)",
+            params![
+                job.segment_id,
+                task_id,
+                job.segment_index,
+                job.speaker,
+                job.text,
+                AUDIO_SEGMENT_STATUS_PENDING,
+                job.file_name,
+                job.attempt_count,
+                created_at,
+            ],
+        )
+        .map_err(|e| format!("创建音频任务分段失败: {e}"))?;
+    }
+
+    let task_state = load_audio_generation_task_state_from_conn(&conn, &task_id)?;
+    build_audio_generation_task_item_from_conn(&conn, task_state)
+}
+
+fn mark_audio_generation_segments_processing(app: &AppHandle, jobs: &[AudioGenerationJob]) -> Result<(), String> {
+    if jobs.is_empty() {
+        return Ok(());
+    }
+
+    let conn = open_workspace_db(app)?;
+    let updated_at = now_text();
+    for job in jobs {
+        conn.execute(
+            "UPDATE audio_generation_segments
+             SET status = ?1,
+                 error_message = NULL,
+                 updated_at = ?2
+             WHERE id = ?3",
+            params![AUDIO_SEGMENT_STATUS_PROCESSING, updated_at, job.segment_id],
+        )
+        .map_err(|e| format!("更新音频任务分段状态失败: {e}"))?;
+    }
+    Ok(())
+}
+
+fn mark_audio_generation_segment_succeeded(app: &AppHandle, job: &AudioGenerationJob) -> Result<(), String> {
+    let conn = open_workspace_db(app)?;
+    conn.execute(
+        "UPDATE audio_generation_segments
+         SET status = ?1,
+             file_name = ?2,
+             file_path = ?3,
+             error_message = NULL,
+             attempt_count = ?4,
+             updated_at = ?5
+         WHERE id = ?6",
+        params![
+            AUDIO_SEGMENT_STATUS_SUCCEEDED,
+            job.file_name,
+            job.file_path.to_string_lossy().to_string(),
+            job.attempt_count + 1,
+            now_text(),
+            job.segment_id,
+        ],
+    )
+    .map_err(|e| format!("更新音频任务成功分段失败: {e}"))?;
+    Ok(())
+}
+
+fn mark_audio_generation_segment_failed(app: &AppHandle, job: &AudioGenerationJob, error_message: &str) -> Result<(), String> {
+    let conn = open_workspace_db(app)?;
+    conn.execute(
+        "UPDATE audio_generation_segments
+         SET status = ?1,
+             file_name = ?2,
+             file_path = NULL,
+             error_message = ?3,
+             attempt_count = ?4,
+             updated_at = ?5
+         WHERE id = ?6",
+        params![
+            AUDIO_SEGMENT_STATUS_FAILED,
+            job.file_name,
+            error_message,
+            job.attempt_count + 1,
+            now_text(),
+            job.segment_id,
+        ],
+    )
+    .map_err(|e| format!("更新音频任务失败分段失败: {e}"))?;
+    Ok(())
+}
+
+fn build_merged_audio_file(task_state: &AudioGenerationTaskState, merged_path: &Path) -> AudioFileItem {
+    let merged_name = format!("merged_{}.wav", task_state.batch_id);
+    let merged_text = task_state
+        .transcript
+        .iter()
+        .map(|segment| format!("{}: {}", segment.speaker, segment.text))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let merged_duration_seconds = transcript_total_duration_seconds(&task_state.transcript);
+
+    AudioFileItem {
+        id: format!("audio-merged-{}", task_state.batch_id),
+        role: "merged".into(),
+        title: merged_audio_title(),
+        file_name: merged_name,
+        display_name: None,
+        duration: format_duration_mm_ss(merged_duration_seconds),
+        duration_seconds: Some(merged_duration_seconds),
+        start_time: Some(0),
+        end_time: Some(merged_duration_seconds),
+        file_path: Some(merged_path.to_string_lossy().to_string()),
+        text: Some(merged_text),
+    }
+}
+
+async fn process_audio_generation_task(
+    app: &AppHandle,
+    config: &AppConfig,
+    task_state: &AudioGenerationTaskState,
+    jobs: Vec<AudioGenerationJob>,
+    output_dir: &Path,
+) -> Result<AudioGenerationProcessResult, String> {
+    let mut last_error: Option<String> = None;
+
+    if !jobs.is_empty() {
+        mark_audio_generation_segments_processing(app, &jobs)?;
+        refresh_audio_generation_task(app, &task_state.id, AUDIO_TASK_STATUS_PROCESSING, task_state.merged_audio_record_id.as_deref(), None)?;
+
+        let endpoint = resolve_tts_endpoint(config, &task_state.tts_endpoint_id)?;
+        let provider = endpoint.provider.clone();
+        let endpoint_id = endpoint.id.clone();
+        let app_handle = app.clone();
+        let config_clone = config.clone();
+
+        let results = stream::iter(jobs.into_iter().map(|job| {
+            let app_handle = app_handle.clone();
+            let config_clone = config_clone.clone();
+            let endpoint_id = endpoint_id.clone();
+            async move {
+                match synthesize_audio_bytes(&app_handle, &config_clone, &endpoint_id, &job.speaker, &job.text).await {
+                    Ok(bytes) => AudioGenerationJobResult {
+                        job,
+                        bytes: Some(bytes),
+                        error_message: None,
+                    },
+                    Err(error_message) => AudioGenerationJobResult {
+                        job,
+                        bytes: None,
+                        error_message: Some(error_message),
+                    },
+                }
+            }
+        }))
+        .buffer_unordered(AUDIO_TTS_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+
+        for result in results {
+            if let Some(bytes) = result.bytes {
+                fs::write(&result.job.file_path, &bytes).map_err(|e| format!("写入音频片段失败: {e}"))?;
+                mark_audio_generation_segment_succeeded(app, &result.job)?;
+                write_backend_log(
+                    app,
+                    "info",
+                    "audio",
+                    "desktop/src-tauri/src/lib.rs::process_audio_generation_task",
+                    "音频片段合成成功",
+                    Some(format!(
+                        "task_id={} index={} endpoint={} provider={} path={}",
+                        task_state.id,
+                        result.job.segment_index + 1,
+                        endpoint_id,
+                        provider,
+                        result.job.file_path.to_string_lossy()
+                    )),
+                );
+                continue;
+            }
+
+            if let Some(error_message) = result.error_message {
+                if last_error.is_none() {
+                    last_error = Some(error_message.clone());
+                }
+                mark_audio_generation_segment_failed(app, &result.job, &error_message)?;
+                write_backend_log(
+                    app,
+                    "error",
+                    "audio",
+                    "desktop/src-tauri/src/lib.rs::process_audio_generation_task",
+                    "音频片段合成失败",
+                    Some(format!(
+                        "task_id={} index={} endpoint={} provider={} error={}",
+                        task_state.id,
+                        result.job.segment_index + 1,
+                        endpoint_id,
+                        provider,
+                        error_message
+                    )),
+                );
+            }
+        }
+    }
+
+    let current_task = load_audio_generation_task_state(app, &task_state.id)?;
+    if current_task.failed_segments > 0 {
+        let task = refresh_audio_generation_task(
+            app,
+            &task_state.id,
+            AUDIO_TASK_STATUS_PARTIAL_FAILED,
+            current_task.merged_audio_record_id.as_deref(),
+            last_error.as_deref().or(current_task.last_error.as_deref()),
+        )?;
+        return Ok(AudioGenerationProcessResult {
+            task,
+            merged_file: None,
+        });
+    }
+
+    if current_task.success_segments == 0 {
+        let task = refresh_audio_generation_task(
+            app,
+            &task_state.id,
+            AUDIO_TASK_STATUS_PARTIAL_FAILED,
+            current_task.merged_audio_record_id.as_deref(),
+            Some("未生成任何可用音频片段，请检查当前 TTS 配置后重试。"),
+        )?;
+        return Ok(AudioGenerationProcessResult {
+            task,
+            merged_file: None,
+        });
+    }
+
+    if let Some(merged_audio_record_id) = current_task.merged_audio_record_id.clone() {
+        let merged_file = load_audio_record_by_id(app, &merged_audio_record_id)?;
+        let task = load_audio_generation_task_item(app, &task_state.id)?;
+        return Ok(AudioGenerationProcessResult { task, merged_file });
+    }
+
+    let segments = load_audio_generation_segments_from_conn(&open_workspace_db(app)?, &task_state.id)?;
+    let mut chunks = Vec::with_capacity(segments.len());
+    for segment in segments {
+        let file_path = segment
+            .file_path
+            .ok_or_else(|| format!("分段 {} 缺少音频文件路径", segment.segment_index + 1))?;
+        let bytes = fs::read(&file_path).map_err(|e| format!("读取音频片段失败: {e}"))?;
+        chunks.push(bytes);
+    }
+
+    let merged_path = output_dir.join(format!("merged_{}.wav", current_task.batch_id));
+    merge_audio_segments_to_wav(&merged_path, &chunks)?;
+    let merged_file = build_merged_audio_file(&current_task, &merged_path);
+    persist_audio_record(app, &current_task.batch_id, &merged_file)?;
+    write_backend_log(
+        app,
+        "info",
+        "audio",
+        "desktop/src-tauri/src/lib.rs::process_audio_generation_task",
+        "合并音频输出完成",
+        Some(format!("task_id={} path={}", task_state.id, merged_path.to_string_lossy())),
+    );
+
+    let task = refresh_audio_generation_task(
+        app,
+        &task_state.id,
+        AUDIO_TASK_STATUS_COMPLETED,
+        Some(&merged_file.id),
+        None,
+    )?;
+
+    Ok(AudioGenerationProcessResult {
+        task,
+        merged_file: Some(merged_file),
+    })
+}
+
+#[tauri::command]
+fn list_audio_generation_tasks(app: AppHandle) -> Result<Vec<AudioGenerationTaskItem>, String> {
+    let conn = open_workspace_db(&app)?;
+    let task_states = list_audio_generation_task_states_from_conn(&conn)?;
+    task_states
+        .into_iter()
+        .map(|task_state| build_audio_generation_task_item_from_conn(&conn, task_state))
+        .collect()
+}
+
+#[tauri::command]
+async fn retry_audio_generation_task(app: AppHandle, task_id: String) -> Result<GenerateAudioOutput, String> {
+    let workspace = ensure_workspace(&app)?;
+    let config = workspace.config;
+    let task_state = load_audio_generation_task_state(&app, &task_id)?;
+    let data_dir = app_data_dir(&app)?;
+    let root_output_dir = ensure_output_dir(&data_dir, &task_state.audio_dir)?;
+    let output_dir = root_output_dir.join(&task_state.batch_id);
+    fs::create_dir_all(&output_dir).map_err(|e| format!("创建输出目录失败: {e}"))?;
+
+    let tts_config = resolve_tts_endpoint(&config, &task_state.tts_endpoint_id)?;
+    let segment_extension = audio_file_extension(&tts_config.provider);
+    let segments = load_audio_generation_segments_from_conn(&open_workspace_db(&app)?, &task_state.id)?;
+    let jobs = segments
+        .into_iter()
+        .filter(|segment| segment.status != AUDIO_SEGMENT_STATUS_SUCCEEDED)
+        .map(|segment| AudioGenerationJob {
+            segment_id: segment.id,
+            segment_index: segment.segment_index,
+            speaker: segment.speaker.clone(),
+            text: segment.text.clone(),
+            file_name: segment
+                .file_name
+                .unwrap_or_else(|| format!("task_{:02}_{}.{}", segment.segment_index + 1, segment.speaker, segment_extension)),
+            file_path: output_dir.join(format!(
+                "task_{:02}_{}.{}",
+                segment.segment_index + 1,
+                segment.speaker,
+                segment_extension
+            )),
+            attempt_count: segment.attempt_count,
+        })
+        .collect::<Vec<_>>();
+
+    let process_result = process_audio_generation_task(&app, &config, &task_state, jobs, &output_dir).await?;
+    let audio_files = process_result
+        .merged_file
+        .clone()
+        .map(|file| vec![file])
+        .unwrap_or_default();
+
+    Ok(GenerateAudioOutput {
+        task: process_result.task,
+        audio_files,
+        merged_file: process_result.merged_file,
+    })
 }
 
 fn load_audio_records(app: &AppHandle) -> Result<Vec<AudioFileItem>, String> {
@@ -2699,109 +3431,56 @@ async fn generate_audio(app: AppHandle, input: GenerateAudioInput) -> Result<Gen
             input.audio_dir
         )),
     );
+
+    if input.transcript.is_empty() {
+        return Err("没有可用于生成音频的对话内容".into());
+    }
+
     let workspace = ensure_workspace(&app)?;
     let config = workspace.config;
+    let tts_config = resolve_tts_endpoint(&config, "")?;
+    let batch_id = unique_batch_id();
     let data_dir = app_data_dir(&app)?;
     let root_output_dir = ensure_output_dir(&data_dir, &input.audio_dir)?;
-    let batch_id = unique_batch_id();
     let output_dir = root_output_dir.join(&batch_id);
     fs::create_dir_all(&output_dir).map_err(|e| format!("创建输出目录失败: {e}"))?;
 
-    let mut merged_chunks: Vec<Vec<u8>> = Vec::new();
-    let mut used_real_tts = false;
-
-    let tts_config = config
-        .tts_endpoints
-        .iter()
-        .find(|e| e.id == config.active_tts_id)
-        .or_else(|| config.tts_endpoints.first())
-        .ok_or_else(|| "没有可用的 TTS 配置".to_string())?;
-
     let segment_extension = audio_file_extension(&tts_config.provider);
-
-    // 仍然逐句合成，便于后端按顺序拼接，但音频页只展示最终合并文件。
-    for (index, segment) in input.transcript.iter().enumerate() {
-        match synthesize_audio_bytes(&app, &config, &segment.speaker, &segment.text).await {
-            Ok(bytes) => {
-                let segment_name = format!("task_{:02}_{}.{}", index + 1, segment.speaker, segment_extension);
-                let segment_path = output_dir.join(&segment_name);
-                fs::write(&segment_path, &bytes).map_err(|e| format!("写入音频片段失败: {e}"))?;
-                merged_chunks.push(bytes);
-                used_real_tts = true;
-                write_backend_log(
-                    &app,
-                    "info",
-                    "audio",
-                    "desktop/src-tauri/src/lib.rs::generate_audio",
-                    "音频片段合成成功",
-                    Some(format!(
-                        "index={} provider={} ext={} path={}",
-                        index + 1,
-                        tts_config.provider,
-                        segment_extension,
-                        segment_path.to_string_lossy()
-                    )),
-                );
-            }
-            Err(error) => {
-                write_backend_log(
-                    &app,
-                    "error",
-                    "audio",
-                    "desktop/src-tauri/src/lib.rs::generate_audio",
-                    "在线 TTS 失败，终止合并",
-                    Some(format!("index={} error={}", index + 1, error)),
-                );
-                return Err(error);
-            }
-        }
-    }
-
-    if !used_real_tts || merged_chunks.is_empty() {
-        return Err("未生成任何可用音频片段，请检查当前 TTS 配置后重试。".into());
-    }
-
-    // 合并文件名带 batch_id，避免重复生成时覆盖历史音频。
-    let merged_name = format!("merged_{}.wav", batch_id);
-    let merged_path = output_dir.join(&merged_name);
-    let merged_text = input
+    let jobs = input
         .transcript
         .iter()
-        .map(|segment| format!("{}: {}", segment.speaker, segment.text))
-        .collect::<Vec<_>>()
-        .join("\n");
+        .enumerate()
+        .map(|(index, segment)| AudioGenerationJob {
+            segment_id: format!("audio-segment-{batch_id}-{}", index + 1),
+            segment_index: index as u32,
+            speaker: segment.speaker.clone(),
+            text: segment.text.clone(),
+            file_name: format!("task_{:02}_{}.{}", index + 1, segment.speaker, segment_extension),
+            file_path: output_dir.join(format!("task_{:02}_{}.{}", index + 1, segment.speaker, segment_extension)),
+            attempt_count: 0,
+        })
+        .collect::<Vec<_>>();
 
-    merge_audio_segments_to_wav(&merged_path, &merged_chunks)?;
-
-    write_backend_log(
+    let task = create_audio_generation_task(
         &app,
-        "info",
-        "audio",
-        "desktop/src-tauri/src/lib.rs::generate_audio",
-        "合并音频输出完成",
-        Some(format!("provider={} ext=wav path={}", tts_config.provider, merged_path.to_string_lossy())),
-    );
-
-    let merged_duration_seconds = transcript_total_duration_seconds(&input.transcript);
-    let merged_file = AudioFileItem {
-        id: format!("audio-merged-{}", batch_id),
-        role: "merged".into(),
-        title: merged_audio_title(),
-        file_name: merged_name,
-        display_name: None,
-        duration: format_duration_mm_ss(merged_duration_seconds),
-        duration_seconds: Some(merged_duration_seconds),
-        start_time: Some(0),
-        end_time: Some(merged_duration_seconds),
-        file_path: Some(merged_path.to_string_lossy().to_string()),
-        text: Some(merged_text),
-    };
-
-    persist_audio_record(&app, &batch_id, &merged_file)?;
+        &batch_id,
+        &input.audio_dir,
+        &tts_config.id,
+        &input.transcript,
+        &jobs,
+    )?;
+    let task_state = load_audio_generation_task_state(&app, &task.id)?;
+    let process_result = process_audio_generation_task(&app, &config, &task_state, jobs, &output_dir).await?;
+    let audio_files = process_result
+        .merged_file
+        .clone()
+        .map(|file| vec![file])
+        .unwrap_or_default();
 
     Ok(GenerateAudioOutput {
-        audio_files: vec![merged_file.clone()],
-        merged_file,
+        task: process_result.task,
+        audio_files,
+        merged_file: process_result.merged_file,
     })
 }
 
@@ -2915,9 +3594,11 @@ pub fn run() {
             list_llm_models,
             list_tts_voices,
             list_audio_files,
+            list_audio_generation_tasks,
             update_audio_display_name,
             generate_conversation,
             generate_audio,
+            retry_audio_generation_task,
             export_zip,
             save_zip_as,
             pick_path,
