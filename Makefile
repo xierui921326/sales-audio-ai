@@ -9,6 +9,11 @@ BACKEND_DIR := backend
 DESKTOP_DIR := desktop
 PYTHON      := python3
 UVICORN     := uvicorn
+TAURI_CLI   := pnpm tauri
+
+TAURI_WINDOWS_TARGET   := x86_64-pc-windows-msvc
+TAURI_MAC_INTEL_TARGET := x86_64-apple-darwin
+TAURI_MAC_ARM_TARGET   := aarch64-apple-darwin
 
 # -----------------------------------------------------------
 # 帮助
@@ -64,12 +69,45 @@ desktop-install: ## 安装前端依赖（pnpm）
 # 前端 - 开发
 # -----------------------------------------------------------
 .PHONY: desktop-dev
-desktop-dev: ## 启动 Tauri 桌面端开发模式
-	cd $(DESKTOP_DIR) && pnpm tauri dev
 
+desktop-dev: ## 启动 Tauri 桌面端开发模式
+	cd $(DESKTOP_DIR) && $(TAURI_CLI) dev
+
+# -----------------------------------------------------------
+# 前端 - 打包
+# -----------------------------------------------------------
 .PHONY: desktop-build
-desktop-build: ## 构建 Tauri 桌面端安装包
-	cd $(DESKTOP_DIR) && pnpm tauri build
+
+desktop-build: ## 构建当前机器可用的 Tauri 桌面端安装包
+	cd $(DESKTOP_DIR) && $(TAURI_CLI) build
+
+.PHONY: desktop-build-windows
+
+desktop-build-windows: ## 构建 Windows 安装包（x86_64-pc-windows-msvc）
+	cd $(DESKTOP_DIR) && $(TAURI_CLI) build --target $(TAURI_WINDOWS_TARGET)
+
+.PHONY: desktop-build-macos-intel
+
+desktop-build-macos-intel: ## 构建 macOS Intel 安装包（x86_64-apple-darwin）
+	cd $(DESKTOP_DIR) && $(TAURI_CLI) build --target $(TAURI_MAC_INTEL_TARGET)
+
+.PHONY: desktop-build-macos-arm
+
+desktop-build-macos-arm: ## 构建 macOS Apple Silicon 安装包（aarch64-apple-darwin）
+	cd $(DESKTOP_DIR) && $(TAURI_CLI) build --target $(TAURI_MAC_ARM_TARGET)
+
+.PHONY: desktop-build-macos
+
+desktop-build-macos: ## 依次构建 macOS Intel 与 Apple Silicon 安装包
+	$(MAKE) desktop-build-macos-intel
+	$(MAKE) desktop-build-macos-arm
+
+.PHONY: desktop-build-all-installers
+
+desktop-build-all-installers: ## 依次构建 Windows、macOS Intel、macOS Apple Silicon 安装包
+	$(MAKE) desktop-build-windows
+	$(MAKE) desktop-build-macos-intel
+	$(MAKE) desktop-build-macos-arm
 
 # -----------------------------------------------------------
 # 一键启动（后端 + 前端并行，仅开发环境）
