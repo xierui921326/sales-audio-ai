@@ -291,15 +291,15 @@
 }
 
 .audio-player-dock__transport {
-  padding: 3px;
+  padding: 3px 20px;
   box-shadow: none;
 }
 
 .audio-player-dock__transport-button {
-  width: 30px;
-  min-width: 30px;
-  height: 30px;
-  min-height: 30px;
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  min-height: 20px;
   padding: 0;
   color: var(--text-secondary);
   background: transparent;
@@ -321,8 +321,8 @@
 }
 
 .audio-player-dock__play-button {
-  width: 34px;
-  height: 34px;
+  width: 25px;
+  height: 25px;
   color: var(--blue-dark);
   background: var(--surface);
   border: 1px solid rgba(47, 128, 255, 0.18);
