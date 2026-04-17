@@ -239,6 +239,7 @@
 }
 
 .task-card__detail {
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -246,6 +247,7 @@
   background: var(--bg-primary);
   border: 1px solid var(--border);
   border-radius: 12px;
+  overflow: auto;
 }
 
 .task-card__detail-header {
@@ -308,14 +310,82 @@
   border-radius: 10px;
 }
 
-.task-center-empty-state {
-  min-height: 320px;
-  padding: 32px 20px;
+.task-detail-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.18);
+}
+
+.task-detail-modal__panel {
+  width: min(1040px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow-soft);
+  overflow: hidden;
+}
+
+.task-detail-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.task-detail-modal__header-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-detail-modal__title {
+  flex-shrink: 0;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+
+.task-detail-modal__task-id {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-detail-modal__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-detail-modal__meta-text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
 }
 
 @media (max-width: 1200px) {
   .task-segment-list {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .task-detail-modal__panel {
+    width: min(920px, 100%);
   }
 }
 
@@ -327,9 +397,17 @@
 
   .task-center-hero,
   .task-card__top,
-  .task-segment-item__top {
+  .task-segment-item__top,
+  .task-detail-modal__meta {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .task-detail-modal__header,
+  .task-detail-modal__header-main {
+    width: 100%;
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .task-center-hero__title-wrap {
@@ -359,5 +437,14 @@
 
   .task-center-panel {
     padding: 16px;
+  }
+
+  .task-detail-modal {
+    padding: 12px;
+  }
+
+  .task-detail-modal__panel {
+    max-height: calc(100vh - 24px);
+    padding: 14px;
   }
 }
