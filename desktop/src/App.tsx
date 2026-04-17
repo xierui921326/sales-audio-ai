@@ -185,9 +185,11 @@ type GenerateDialogState = {
   tone: 'error' | 'info' | 'success';
 } | null;
 
+type SaveNoticeText = '备注名保存成功' | '备注名保存失败';
+
 type SaveNoticeState = {
-  text: string;
-  tone: 'success' | 'info';
+  text: SaveNoticeText;
+  tone: 'success' | 'error';
 } | null;
 
 function padDatePart(value: number): string {
@@ -384,7 +386,7 @@ export default function App() {
     setAudioFiles(current => current.map(file => (file.id === updated.id ? { ...file, ...updated } : file)));
   }
 
-  function showSaveNotice(text: string, tone: 'success' | 'info' = 'success') {
+  function showSaveNotice(text: SaveNoticeText, tone: 'success' | 'error') {
     setSaveNotice({ text, tone });
   }
 
@@ -395,15 +397,11 @@ export default function App() {
         displayName,
       });
       updateAudioFile(updated);
-      showSaveNotice('备注名称已保存');
+      showSaveNotice('备注名保存成功', 'success');
       logger.info('audio', '音频备注更新成功', { id, displayName: updated.displayName });
     } catch (err) {
       logger.error('audio', '音频备注更新失败', err);
-      setGenerateDialog({
-        title: '备注保存失败',
-        text: err instanceof Error ? err.message : String(err),
-        tone: 'error',
-      });
+      showSaveNotice('备注名保存失败', 'error');
       throw err;
     }
   }
@@ -875,8 +873,6 @@ export default function App() {
         </div>
       </div>
 
-      {saveNotice ? <div className={`save-notice save-notice--${saveNotice.tone}`}>{saveNotice.text}</div> : null}
-
       {generateDialog ? (
         <div className="dialog-overlay" onClick={() => setGenerateDialog(null)}>
           <div className="dialog-card" onClick={e => e.stopPropagation()}>
@@ -892,6 +888,17 @@ export default function App() {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {saveNotice ? (
+        <button
+          className={`floating-notice floating-notice--${saveNotice.tone}`}
+          type="button"
+          onClick={() => setSaveNotice(null)}
+          aria-label={saveNotice.text}
+        >
+          {saveNotice.text}
+        </button>
       ) : null}
     </>
   );
