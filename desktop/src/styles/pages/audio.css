@@ -171,7 +171,7 @@
 .play-toggle__icon.is-play::before {
   content: "";
   position: absolute;
-  left: 1px;
+  left: 2px;
   top: -1px;
   width: 0;
   height: 0;
