@@ -4,4 +4,5 @@
 @import "./components/panels.css";
 @import "./components/config.css";
 @import "./pages/generate.css";
+@import "./pages/tasks.css";
 @import "./pages/audio.css";

@@ -227,6 +227,25 @@
   border-bottom-left-radius: 3px;
 }
 
+.nav-icon-shape--tasks::before {
+  left: 2px;
+  top: 3px;
+  width: 12px;
+  height: 10px;
+  border: 1.8px solid currentColor;
+  border-radius: 3px;
+}
+
+.nav-icon-shape--tasks::after {
+  left: 4px;
+  top: 6px;
+  width: 8px;
+  height: 1.8px;
+  background: currentColor;
+  border-radius: 999px;
+  box-shadow: 0 4px 0 currentColor;
+}
+
 .nav-icon-shape--audio::before {
   left: 5px;
   top: 2px;

@@ -5,6 +5,7 @@ import { readFile } from '@tauri-apps/plugin-fs';
 import Sidebar from './components/layout/Sidebar';
 import StorageHeader from './components/config/StorageHeader';
 import GeneratePage from './pages/GeneratePage';
+import TaskCenterPage from './pages/TaskCenterPage';
 import AudioPage from './pages/AudioPage';
 import LlmConfigPage from './pages/LlmConfigPage';
 import TtsConfigPage from './pages/TtsConfigPage';
@@ -839,6 +840,7 @@ export default function App() {
           <main className="workspace-main">
             <MainContent
               activeNav={activeNav}
+              onNavChange={setActiveNav}
               config={config}
               setConfig={setConfig}
               savedConfigSnapshot={savedConfigSnapshot}
@@ -906,6 +908,7 @@ export default function App() {
 
 interface MainContentProps {
   activeNav: NavigationItemId;
+  onNavChange: (nav: NavigationItemId) => void;
   config: AppConfig;
   setConfig: React.Dispatch<React.SetStateAction<AppConfig>>;
   savedConfigSnapshot: AppConfig;
@@ -937,10 +940,12 @@ interface MainContentProps {
   busy: GenerateBusyState;
 }
 
-function MainContent({ activeNav, config, setConfig, savedConfigSnapshot, prompts, setPrompts, transcript, streamingText, audioFiles, audioGenerationTasks, playingId, isPlaying, currentTime, currentDuration, loadingAudioId, onPlay, onSeek, onSkip, onSaveAudioDisplayName, onGenerateConv, onGenerateAudio, onRetryAudioTask, formatTaskTime, onSaveConfig, onSavePrompts, configSaveState, promptSaveState, hasUnsavedChanges, hasUnsavedPromptChanges, busy }: MainContentProps) {
+function MainContent({ activeNav, onNavChange, config, setConfig, savedConfigSnapshot, prompts, setPrompts, transcript, streamingText, audioFiles, audioGenerationTasks, playingId, isPlaying, currentTime, currentDuration, loadingAudioId, onPlay, onSeek, onSkip, onSaveAudioDisplayName, onGenerateConv, onGenerateAudio, onRetryAudioTask, formatTaskTime, onSaveConfig, onSavePrompts, configSaveState, promptSaveState, hasUnsavedChanges, hasUnsavedPromptChanges, busy }: MainContentProps) {
   switch (activeNav) {
     case 'generate':
-      return <GeneratePage config={config} prompts={prompts} transcript={transcript} streamingText={streamingText} audioGenerationTasks={audioGenerationTasks} onGenerate={onGenerateConv} onGenerateAudio={onGenerateAudio} onRetryAudioTask={onRetryAudioTask} formatTaskTime={formatTaskTime} busy={busy} />;
+      return <GeneratePage config={config} prompts={prompts} transcript={transcript} streamingText={streamingText} onGenerate={onGenerateConv} onGenerateAudio={onGenerateAudio} busy={busy} />;
+    case 'tasks':
+      return <TaskCenterPage audioGenerationTasks={audioGenerationTasks} formatTaskTime={formatTaskTime} onRetryAudioTask={onRetryAudioTask} busy={busy.generatingAudio} />;
     case 'audio':
       return (
         <div className="page-view flex-col animate-fade-in">
