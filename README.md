@@ -353,6 +353,182 @@ FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 4. 检查 workflow 中的 `codesign` 和 `spctl` 日志
 5. 再把 Release 产物发给用户
 
+## Apple 证书导出与 GitHub Secrets 配置教程
+
+如果 GitHub Actions 在 macOS 打包时出现下面这类错误：
+
+```text
+SecKeychainItemImport: One or more parameters passed to a function were not valid.
+failed to import keychain certificate
+```
+
+通常说明不是代码有问题，而是 Apple 证书导入失败。最常见原因是：
+
+- `APPLE_CERTIFICATE` 不是有效的 `.p12` base64
+- `APPLE_CERTIFICATE_PASSWORD` 不正确
+- 导出的 `.p12` 没有包含私钥
+- GitHub Secret 中的证书内容被截断或格式被破坏
+
+### 第一步：在本地 Mac 上导出可用证书
+
+你需要在本地 macOS 的“钥匙串访问”中操作。
+
+建议使用的证书类型：
+
+- `Developer ID Application`
+
+操作步骤：
+
+1. 打开“钥匙串访问”
+2. 进入“登录”钥匙串中的“我的证书”
+3. 找到你的 `Developer ID Application` 证书
+4. 展开证书，确认下面有对应的私钥
+5. 右键该证书，选择“导出”
+6. 导出为 `.p12` 文件
+7. 为这个 `.p12` 文件设置一个你自己记得住的密码
+
+注意：
+
+- 必须从“我的证书”中导出，而不是单独导出 `.cer`
+- 如果证书下面没有私钥，这个 `.p12` 通常不能用于 CI 签名
+
+### 第二步：把 `.p12` 转成 base64
+
+在本地终端执行：
+
+```bash
+openssl base64 -A -in /path/to/certificate.p12 -out certificate-base64.txt
+```
+
+执行完成后：
+
+- 打开 `certificate-base64.txt`
+- 复制其中的完整内容
+- 这个内容就是 GitHub Secret `APPLE_CERTIFICATE` 的值
+
+说明：
+
+- `-A` 会输出单行 base64，更适合放到 GitHub Secrets
+- 不要自己手动删字符
+- 不要加引号
+- 不要加 `BEGIN` / `END` 头尾内容
+
+### 第三步：配置 GitHub Secrets
+
+进入 GitHub 仓库：
+
+- `Settings`
+- `Secrets and variables`
+- `Actions`
+
+至少配置下面两个：
+
+- `APPLE_CERTIFICATE`
+- `APPLE_CERTIFICATE_PASSWORD`
+
+其中：
+
+- `APPLE_CERTIFICATE`：上一步得到的 `.p12` base64 内容
+- `APPLE_CERTIFICATE_PASSWORD`：你导出 `.p12` 时设置的密码
+
+如果你还要做 notarization（公证），再额外配置：
+
+- `APPLE_ID`
+- `APPLE_PASSWORD`
+- `APPLE_TEAM_ID`
+
+或者：
+
+- `APPLE_API_KEY`
+- `APPLE_API_ISSUER`
+- `APPLE_API_KEY_PATH`
+
+### 第四步：本地自检证书是否可用
+
+如果你想先在本地确认 `.p12` 是否正常，可以执行：
+
+```bash
+openssl pkcs12 -in /path/to/certificate.p12 -nokeys
+```
+
+它会要求你输入 `.p12` 密码。
+
+如果这里就报错，通常说明：
+
+- `.p12` 文件有问题
+- 密码不对
+
+还可以继续执行：
+
+```bash
+openssl pkcs12 -in /path/to/certificate.p12 -info -noout
+```
+
+如果这一步能正常读取，说明这个 `.p12` 至少结构上是可识别的。
+
+### 第五步：重新触发 GitHub Actions
+
+配置完成后，重新触发：
+
+- `desktop-package.yml`
+
+重点查看这几个步骤：
+
+- `Validate Apple certificate secret before macOS build`
+- `Build installer`
+- `Validate macOS bundles`
+- `Verify notarization when Apple credentials are configured`
+
+### 常见错误与对应解释
+
+#### 1. `APPLE_CERTIFICATE 无法解码为有效的 p12 文件`
+
+说明：
+
+- GitHub Secret 里的内容不是正确的 `.p12` base64
+- 或者复制时被截断了
+
+解决方式：
+
+- 重新从 `.p12` 文件生成 base64
+- 重新复制完整内容到 GitHub Secrets
+
+#### 2. `APPLE_CERTIFICATE_PASSWORD 不正确，或 APPLE_CERTIFICATE 不是有效的 .p12 证书文件`
+
+说明：
+
+- `.p12` 密码不对
+- 或者导出的文件本身就不是有效 `.p12`
+
+解决方式：
+
+- 重新确认导出 `.p12` 时设置的密码
+- 重新导出证书
+
+#### 3. `无法读取 p12 证书内容，请重新从钥匙串导出带私钥的 .p12 文件`
+
+说明：
+
+- 你导出的证书里可能没有私钥
+- 或者导出的对象不对
+
+解决方式：
+
+- 回到“钥匙串访问”的“我的证书”重新导出
+- 确保导出的是带私钥的证书条目
+
+#### 4. `SecKeychainItemImport: One or more parameters passed to a function were not valid.`
+
+说明：
+
+- 这是 macOS 底层导入失败提示
+- 本质上通常还是证书内容、格式或密码问题
+
+解决方式：
+
+- 优先看 workflow 前面的证书预检查步骤输出
+- 不要只盯着最后这条底层错误
+
 ## 适合先做的下一步
 
 如果你接下来还要继续完善这个项目，我建议优先做下面几件事：

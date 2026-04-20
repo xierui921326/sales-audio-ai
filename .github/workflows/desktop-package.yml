@@ -72,6 +72,45 @@ jobs:
         working-directory: desktop
         run: pnpm install --frozen-lockfile
 
+      - name: Validate Apple certificate secret before macOS build
+        if: startsWith(matrix.name, 'macos')
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${APPLE_CERTIFICATE}" ]; then
+            echo '未配置 APPLE_CERTIFICATE，将使用 ad-hoc 签名构建 macOS 包'
+            exit 0
+          fi
+
+          if [ -z "${APPLE_CERTIFICATE_PASSWORD}" ]; then
+            echo '已配置 APPLE_CERTIFICATE，但缺少 APPLE_CERTIFICATE_PASSWORD' >&2
+            exit 1
+          fi
+
+          cert_path="$RUNNER_TEMP/apple-signing-cert.p12"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$cert_path"
+
+          if [ ! -s "$cert_path" ]; then
+            echo 'APPLE_CERTIFICATE 无法解码为有效的 p12 文件，请检查 secret 是否为 .p12 的 base64 原文且未被截断' >&2
+            exit 1
+          fi
+
+          if ! openssl pkcs12 -in "$cert_path" -nokeys -passin "pass:${APPLE_CERTIFICATE_PASSWORD}" >/dev/null 2>&1; then
+            echo 'APPLE_CERTIFICATE_PASSWORD 不正确，或 APPLE_CERTIFICATE 不是有效的 .p12 证书文件' >&2
+            exit 1
+          fi
+
+          if ! openssl pkcs12 -in "$cert_path" -info -noout -passin "pass:${APPLE_CERTIFICATE_PASSWORD}" >/dev/null 2>&1; then
+            echo '无法读取 p12 证书内容，请重新从钥匙串导出带私钥的 .p12 文件后再转 base64' >&2
+            exit 1
+          fi
+
+          echo 'Apple 证书 secret 预检查通过'
+
       - name: Build installer
         env:
           APPLE_CERTIFICATE: ${{ startsWith(matrix.name, 'macos') && secrets.APPLE_CERTIFICATE || '' }}
