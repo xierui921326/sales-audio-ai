@@ -187,17 +187,48 @@ jobs:
 
           echo '未配置完整的 notarization 参数，将仅进行签名，不执行公证'
 
+      - name: Import Apple signing certificate
+        if: startsWith(matrix.name, 'macos') && steps.apple_certificate_check.outputs.use_certificate == 'true'
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - name: Resolve Apple signing identity
+        if: startsWith(matrix.name, 'macos')
+        id: signing_identity
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ steps.apple_certificate_check.outputs.use_certificate }}" != 'true' ]; then
+            echo 'identity=-' >> "$GITHUB_OUTPUT"
+            echo '证书不可用，使用 ad-hoc 签名'
+            exit 0
+          fi
+
+          identity=$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' | head -n 1)
+
+          if [ -z "$identity" ]; then
+            echo '未在钥匙串中找到 Developer ID Application 签名身份，回退到 ad-hoc 签名' >&2
+            echo 'identity=-' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+          echo "使用签名身份: $identity"
+
       - name: Build installer
         env:
-          APPLE_CERTIFICATE: ${{ steps.apple_certificate_check.outputs.use_certificate == 'true' && secrets.APPLE_CERTIFICATE || '' }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ steps.apple_certificate_check.outputs.use_certificate == 'true' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_CERTIFICATE: ''
+          APPLE_CERTIFICATE_PASSWORD: ''
           APPLE_ID: ${{ steps.notarization_env.outputs.apple_id || '' }}
           APPLE_PASSWORD: ${{ steps.notarization_env.outputs.apple_password || '' }}
           APPLE_TEAM_ID: ${{ steps.notarization_env.outputs.apple_team_id || '' }}
           APPLE_API_KEY: ${{ steps.notarization_env.outputs.apple_api_key || '' }}
           APPLE_API_ISSUER: ${{ steps.notarization_env.outputs.apple_api_issuer || '' }}
           APPLE_API_KEY_PATH: ${{ steps.notarization_env.outputs.apple_api_key_path || '' }}
-          APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.name, 'macos') && (steps.apple_certificate_check.outputs.use_certificate != 'true' && '-' || '') || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.name, 'macos') && steps.signing_identity.outputs.identity || '' }}
         run: make ${{ matrix.make_target }}
 
       - name: Remove Tauri updater signature files without Apple signing
