@@ -74,6 +74,7 @@ jobs:
 
       - name: Validate Apple certificate secret before macOS build
         if: startsWith(matrix.name, 'macos')
+        id: apple_certificate_check
         shell: bash
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -87,32 +88,37 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo 'use_certificate=false' >> "$GITHUB_OUTPUT"
+
           if [ -z "${APPLE_CERTIFICATE}" ]; then
             echo '未配置 APPLE_CERTIFICATE，将使用 ad-hoc 签名构建 macOS 包'
             exit 0
           fi
 
           if [ -z "${APPLE_CERTIFICATE_PASSWORD}" ]; then
-            echo '已配置 APPLE_CERTIFICATE，但缺少 APPLE_CERTIFICATE_PASSWORD' >&2
-            exit 1
+            echo '已配置 APPLE_CERTIFICATE，但缺少 APPLE_CERTIFICATE_PASSWORD，将回退到 ad-hoc 签名' >&2
+            exit 0
           fi
 
           cert_path="$RUNNER_TEMP/apple-signing-cert.p12"
-          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$cert_path"
+          if ! printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$cert_path" 2>/dev/null; then
+            echo 'APPLE_CERTIFICATE 不是有效 base64，将回退到 ad-hoc 签名' >&2
+            exit 0
+          fi
 
           if [ ! -s "$cert_path" ]; then
-            echo 'APPLE_CERTIFICATE 无法解码为有效的 p12 文件，请检查 secret 是否为 .p12 的 base64 原文且未被截断' >&2
-            exit 1
+            echo 'APPLE_CERTIFICATE 无法解码为有效的 p12 文件，将回退到 ad-hoc 签名' >&2
+            exit 0
           fi
 
           if ! openssl pkcs12 -in "$cert_path" -nokeys -passin "pass:${APPLE_CERTIFICATE_PASSWORD}" >/dev/null 2>&1; then
-            echo 'APPLE_CERTIFICATE_PASSWORD 不正确，或 APPLE_CERTIFICATE 不是有效的 .p12 证书文件' >&2
-            exit 1
+            echo 'APPLE_CERTIFICATE_PASSWORD 不正确，或 APPLE_CERTIFICATE 不是有效的 .p12 证书文件，将回退到 ad-hoc 签名' >&2
+            exit 0
           fi
 
           if ! openssl pkcs12 -in "$cert_path" -info -noout -passin "pass:${APPLE_CERTIFICATE_PASSWORD}" >/dev/null 2>&1; then
-            echo '无法读取 p12 证书内容，请重新从钥匙串导出带私钥的 .p12 文件后再转 base64' >&2
-            exit 1
+            echo '无法读取 p12 证书内容，将回退到 ad-hoc 签名。请重新从钥匙串导出带私钥的 .p12 文件后再转 base64' >&2
+            exit 0
           fi
 
           has_any_apple_id_auth=false
@@ -146,6 +152,7 @@ jobs:
             exit 1
           fi
 
+          echo 'use_certificate=true' >> "$GITHUB_OUTPUT"
           echo 'Apple 证书 secret 预检查通过'
 
       - name: Prepare notarization environment
@@ -182,15 +189,15 @@ jobs:
 
       - name: Build installer
         env:
-          APPLE_CERTIFICATE: ${{ startsWith(matrix.name, 'macos') && secrets.APPLE_CERTIFICATE || '' }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ startsWith(matrix.name, 'macos') && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_CERTIFICATE: ${{ steps.apple_certificate_check.outputs.use_certificate == 'true' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ steps.apple_certificate_check.outputs.use_certificate == 'true' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
           APPLE_ID: ${{ steps.notarization_env.outputs.apple_id || '' }}
           APPLE_PASSWORD: ${{ steps.notarization_env.outputs.apple_password || '' }}
           APPLE_TEAM_ID: ${{ steps.notarization_env.outputs.apple_team_id || '' }}
           APPLE_API_KEY: ${{ steps.notarization_env.outputs.apple_api_key || '' }}
           APPLE_API_ISSUER: ${{ steps.notarization_env.outputs.apple_api_issuer || '' }}
           APPLE_API_KEY_PATH: ${{ steps.notarization_env.outputs.apple_api_key_path || '' }}
-          APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.name, 'macos') && (secrets.APPLE_CERTIFICATE == '' && '-' || '') || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.name, 'macos') && (steps.apple_certificate_check.outputs.use_certificate != 'true' && '-' || '') || '' }}
         run: make ${{ matrix.make_target }}
 
       - name: Remove Tauri updater signature files without Apple signing
