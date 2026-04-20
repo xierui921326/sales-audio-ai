@@ -229,6 +229,7 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.name, 'macos') && steps.signing_identity.outputs.identity || '' }}
           APPLE_CERTIFICATE_SECRET: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD_SECRET: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        shell: bash
         run: |
           set -euo pipefail
 
