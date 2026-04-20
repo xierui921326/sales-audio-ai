@@ -57,32 +57,32 @@
 .task-center-page__overview {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
 }
 
 .task-overview-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   min-height: 0;
-  padding: 8px 12px;
+  padding: 6px 10px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 12px;
   box-shadow: var(--shadow-soft);
 }
 
 .task-overview-card__label {
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: 11px;
+  line-height: 1.4;
   color: var(--text-secondary);
 }
 
 .task-overview-card__value {
   flex-shrink: 0;
-  font-size: 20px;
-  line-height: 1.1;
+  font-size: 18px;
+  line-height: 1;
   color: var(--text-primary);
 }
 
@@ -161,34 +161,32 @@
   min-width: 0;
   flex: 1;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 6px;
 }
 
 .task-card__title-row {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px;
+  flex-wrap: nowrap;
 }
 
 .task-card__title {
   flex-shrink: 0;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
-  line-height: 1.4;
+  line-height: 1.5;
   color: var(--text-primary);
 }
 
 .task-card__id {
   min-width: 0;
   flex: 1;
-  font-size: 12px;
-  line-height: 1.6;
+  font-size: 11px;
+  line-height: 1.5;
   color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  word-break: break-all;
 }
 
 .task-card__time {
