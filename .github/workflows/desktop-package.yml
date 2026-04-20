@@ -19,17 +19,28 @@ jobs:
             os: windows-latest
             make_target: desktop-build-windows
             rust_target: x86_64-pc-windows-msvc
-            artifact_path: desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/**/*
+            bundle_dir: desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle
+            release_glob: |
+              desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+              desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
           - name: macos-intel
-            os: macos-latest
+            os: macos-13
             make_target: desktop-build-macos-intel
             rust_target: x86_64-apple-darwin
-            artifact_path: desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/**/*
+            bundle_dir: desktop/src-tauri/target/x86_64-apple-darwin/release/bundle
+            release_glob: |
+              desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+              desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz
+              desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
           - name: macos-arm
-            os: macos-latest
+            os: macos-14
             make_target: desktop-build-macos-arm
             rust_target: aarch64-apple-darwin
-            artifact_path: desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/**/*
+            bundle_dir: desktop/src-tauri/target/aarch64-apple-darwin/release/bundle
+            release_glob: |
+              desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+              desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
+              desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
 
     runs-on: ${{ matrix.os }}
 
@@ -61,11 +72,113 @@ jobs:
       - name: Build installer
         run: make ${{ matrix.make_target }}
 
+      - name: Repackage macOS app without certificate
+        if: startsWith(matrix.name, 'macos')
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          app_paths=("${{ matrix.bundle_dir }}/macos"/*.app)
+          dmg_paths=("${{ matrix.bundle_dir }}/dmg"/*.dmg)
+          updater_paths=("${{ matrix.bundle_dir }}/macos"/*.app.tar.gz)
+
+          if [ ${#app_paths[@]} -eq 0 ]; then
+            echo '未找到 macOS .app 构建产物' >&2
+            exit 1
+          fi
+
+          for app in "${app_paths[@]}"; do
+            app_name="$(basename "$app")"
+            app_base="${app_name%.app}"
+            app_parent="$(dirname "$app")"
+            dmg_path="${{ matrix.bundle_dir }}/dmg/${app_base}.dmg"
+            tar_path="$app_parent/${app_base}.app.tar.gz"
+
+            echo "Ad-hoc 签名: $app"
+            codesign --force --deep --sign - "$app"
+            codesign --verify --deep --strict "$app"
+
+            echo "重新打包应用归档: $tar_path"
+            rm -f "$tar_path"
+            tar -czf "$tar_path" -C "$app_parent" "$app_name"
+
+            echo "重新生成 DMG: $dmg_path"
+            rm -f "$dmg_path"
+            hdiutil create -volname "$app_base" -srcfolder "$app" -ov -format UDZO "$dmg_path"
+          done
+
+          for stale in "${updater_paths[@]}"; do
+            if [ ! -f "$stale" ]; then
+              continue
+            fi
+          done
+
+      - name: Validate macOS bundles
+        if: startsWith(matrix.name, 'macos')
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          app_paths=("${{ matrix.bundle_dir }}/macos"/*.app)
+          dmg_paths=("${{ matrix.bundle_dir }}/dmg"/*.dmg)
+
+          if [ ${#app_paths[@]} -eq 0 ] && [ ${#dmg_paths[@]} -eq 0 ]; then
+            echo '未找到 macOS 构建产物' >&2
+            exit 1
+          fi
+
+          if [ ${#app_paths[@]} -gt 0 ]; then
+            for app in "${app_paths[@]}"; do
+              echo "验证签名: $app"
+              codesign -dvvv "$app"
+              codesign --verify --deep --strict "$app"
+            done
+          fi
+
+          if [ ${#dmg_paths[@]} -gt 0 ]; then
+            for dmg in "${dmg_paths[@]}"; do
+              echo "校验磁盘镜像: $dmg"
+              hdiutil verify "$dmg"
+            done
+          fi
+
+      - name: Collect build artifacts
+        id: collect_artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          files=()
+          while IFS= read -r pattern; do
+            [ -z "$pattern" ] && continue
+            matches=( $pattern )
+            if [ ${#matches[@]} -gt 0 ]; then
+              files+=("${matches[@]}")
+            fi
+          done <<'EOF'
+          ${{ matrix.release_glob }}
+          EOF
+
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "未找到可上传的安装包: ${{ matrix.name }}" >&2
+            exit 1
+          fi
+
+          {
+            echo 'files<<EOF'
+            printf '%s\n' "${files[@]}"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: sales-audio-ai-${{ matrix.name }}
-          path: ${{ matrix.artifact_path }}
+          path: ${{ steps.collect_artifacts.outputs.files }}
+          if-no-files-found: error
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -74,7 +187,7 @@ jobs:
 
     steps:
       - name: Download all build artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           path: release-assets
 
@@ -83,7 +196,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t files < <(find release-assets -type f)
+          mapfile -t files < <(find release-assets -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' -o -name '*.app.tar.gz' -o -name '*.sig' \))
 
           if [ "${#files[@]}" -eq 0 ]; then
             echo '未找到可发布的构建产物' >&2
