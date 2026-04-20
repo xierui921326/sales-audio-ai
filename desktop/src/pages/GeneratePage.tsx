@@ -4,7 +4,6 @@ import TranscriptPanel from '../components/TranscriptPanel';
 import { logger } from '../utils/logger';
 import {
   AppConfig,
-  AudioGenerationTaskItem,
   GenerateBusyState,
   GenerateConversationInput,
   PromptTemplate,
@@ -17,11 +16,8 @@ interface GeneratePageProps {
   prompts: PromptTemplate[];
   transcript: TranscriptSegment[];
   streamingText: string;
-  audioGenerationTasks: AudioGenerationTaskItem[];
   onGenerate: (params: GenerateConversationInput) => Promise<void>;
   onGenerateAudio: () => Promise<void>;
-  onRetryAudioTask: (taskId: string) => Promise<void>;
-  formatTaskTime: (value: string) => string;
   busy: GenerateBusyState;
 }
 
@@ -32,7 +28,6 @@ const DEFAULT_FORM: GenerateConversationInput = {
 };
 
 const MIN_ROUNDS = 2;
-const MAX_TASK_ITEMS = 4;
 
 function normalizeRoundsInput(value: string): string {
   return value.replace(/[^\d]/g, '');
@@ -56,29 +51,6 @@ function isValidRounds(value: string): boolean {
   return rounds !== null && rounds >= MIN_ROUNDS;
 }
 
-function getTaskStatusMeta(status: AudioGenerationTaskItem['status']): { label: string; tone: 'success' | 'warning' | 'neutral' } {
-  switch (status) {
-    case 'completed':
-      return { label: '已完成', tone: 'success' };
-    case 'partial_failed':
-      return { label: '部分失败', tone: 'warning' };
-    case 'processing':
-      return { label: '生成中', tone: 'neutral' };
-    default:
-      return { label: '等待中', tone: 'neutral' };
-  }
-}
-
-function getTaskFailureSummary(task: AudioGenerationTaskItem): string | null {
-  const firstFailedSegment = task.segments.find(segment => segment.status === 'failed' && segment.errorMessage?.trim());
-  const message = firstFailedSegment?.errorMessage?.trim() || task.lastError?.trim();
-  if (!message) {
-    return null;
-  }
-
-  return message.length > 72 ? `${message.slice(0, 72)}...` : message;
-}
-
 export { MIN_ROUNDS };
 
 export default function GeneratePage({
@@ -86,11 +58,8 @@ export default function GeneratePage({
   prompts,
   transcript,
   streamingText,
-  audioGenerationTasks,
   onGenerate,
   onGenerateAudio,
-  onRetryAudioTask,
-  formatTaskTime,
   busy,
 }: GeneratePageProps) {
   const [form, setForm] = React.useState<GenerateConversationInput>(DEFAULT_FORM);
@@ -112,7 +81,6 @@ export default function GeneratePage({
     return config.llmEndpoints[0]?.id ?? '';
   }, [config.activeLlmId, config.llmEndpoints]);
 
-  const recentTasks = React.useMemo(() => audioGenerationTasks.slice(0, MAX_TASK_ITEMS), [audioGenerationTasks]);
   const [selectedLlmId, setSelectedLlmId] = React.useState(defaultLlmId);
   const selectedPrompt = prompts[0];
 
@@ -170,12 +138,6 @@ export default function GeneratePage({
   function handleGenerateAudioClick() {
     onGenerateAudio().catch(err => {
       logger.error('generate-page', '触发音频生成失败', err);
-    });
-  }
-
-  function handleRetryAudioTaskClick(taskId: string) {
-    onRetryAudioTask(taskId).catch(err => {
-      logger.error('generate-page', '触发音频重试失败', err);
     });
   }
 
@@ -250,61 +212,6 @@ export default function GeneratePage({
                 ) : !selectedPrompt.systemPrompt.trim() ? (
                   <div className="generate-form-hint">当前 Prompt 为空，将回退到系统内置 Prompt。</div>
                 ) : null}
-
-                <section className="generate-task-section">
-                  <div className="generate-task-section__header">
-                    <div>
-                      <div className="storage-card__title">最近音频任务</div>
-                      <div className="storage-card__desc">生成失败后可直接重试失败片段，无需重新生成整段对话。</div>
-                    </div>
-                  </div>
-
-                  {recentTasks.length === 0 ? (
-                    <div className="generate-form-hint generate-form-hint--compact">还没有音频任务，生成对话后可在这里查看最新进度。</div>
-                  ) : (
-                    <div className="generate-task-list">
-                      {recentTasks.map(task => {
-                        const taskStatus = getTaskStatusMeta(task.status);
-                        const failureSummary = getTaskFailureSummary(task);
-                        const canRetryTask = task.status === 'partial_failed' && !isGeneratingAudio;
-
-                        return (
-                          <article className="generate-task-item" key={task.id}>
-                            <div className="generate-task-item__top">
-                              <div className="generate-task-item__time">{formatTaskTime(task.updatedAt)}</div>
-                              <div className={`generate-task-status generate-task-status--${taskStatus.tone}`}>{taskStatus.label}</div>
-                            </div>
-
-                            <div className="generate-task-metrics">
-                              <div className="generate-task-metric">
-                                <span className="generate-task-metric__label">总片段</span>
-                                <strong>{task.totalSegments}</strong>
-                              </div>
-                              <div className="generate-task-metric generate-task-metric--success">
-                                <span className="generate-task-metric__label">成功</span>
-                                <strong>{task.successSegments}</strong>
-                              </div>
-                              <div className="generate-task-metric generate-task-metric--warning">
-                                <span className="generate-task-metric__label">失败</span>
-                                <strong>{task.failedSegments}</strong>
-                              </div>
-                            </div>
-
-                            {failureSummary ? <div className="generate-task-error">最近错误：{failureSummary}</div> : null}
-
-                            {task.status === 'partial_failed' ? (
-                              <div className="generate-task-actions">
-                                <button className="chip-button strong-secondary compact-chip-button" onClick={() => handleRetryAudioTaskClick(task.id)} disabled={!canRetryTask} type="button">
-                                  {isGeneratingAudio ? '处理中...' : '重试失败片段'}
-                                </button>
-                              </div>
-                            ) : null}
-                          </article>
-                        );
-                      })}
-                    </div>
-                  )}
-                </section>
               </div>
             </div>
 

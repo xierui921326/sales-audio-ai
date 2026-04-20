@@ -2,6 +2,7 @@ import { NavigationItemId } from '../../types';
 
 const NAV_ITEMS = [
   { id: 'generate', label: '生成对话', iconClass: 'nav-icon-shape nav-icon-shape--generate', description: '基于 AI 模拟销售对话场景' },
+  { id: 'tasks', label: '任务中心', iconClass: 'nav-icon-shape nav-icon-shape--tasks', description: '追踪分片音频任务进度与结果' },
   { id: 'audio', label: '音频管理', iconClass: 'nav-icon-shape nav-icon-shape--audio', description: '预览、播放并导出生成的音频' },
   { id: 'llm', label: 'LLM 配置', iconClass: 'nav-icon-shape nav-icon-shape--llm', description: '管理大语言模型 API 终端' },
   { id: 'tts', label: 'TTS 配置', iconClass: 'nav-icon-shape nav-icon-shape--tts', description: '管理语音合成服务商信息' },

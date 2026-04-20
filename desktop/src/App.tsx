@@ -5,6 +5,7 @@ import { readFile } from '@tauri-apps/plugin-fs';
 import Sidebar from './components/layout/Sidebar';
 import StorageHeader from './components/config/StorageHeader';
 import GeneratePage from './pages/GeneratePage';
+import TaskCenterPage from './pages/TaskCenterPage';
 import AudioPage from './pages/AudioPage';
 import LlmConfigPage from './pages/LlmConfigPage';
 import TtsConfigPage from './pages/TtsConfigPage';
@@ -185,9 +186,11 @@ type GenerateDialogState = {
   tone: 'error' | 'info' | 'success';
 } | null;
 
+type SaveNoticeText = '备注名保存成功' | '备注名保存失败';
+
 type SaveNoticeState = {
-  text: string;
-  tone: 'success' | 'info';
+  text: SaveNoticeText;
+  tone: 'success' | 'error';
 } | null;
 
 function padDatePart(value: number): string {
@@ -384,7 +387,7 @@ export default function App() {
     setAudioFiles(current => current.map(file => (file.id === updated.id ? { ...file, ...updated } : file)));
   }
 
-  function showSaveNotice(text: string, tone: 'success' | 'info' = 'success') {
+  function showSaveNotice(text: SaveNoticeText, tone: 'success' | 'error') {
     setSaveNotice({ text, tone });
   }
 
@@ -395,15 +398,11 @@ export default function App() {
         displayName,
       });
       updateAudioFile(updated);
-      showSaveNotice('备注名称已保存');
+      showSaveNotice('备注名保存成功', 'success');
       logger.info('audio', '音频备注更新成功', { id, displayName: updated.displayName });
     } catch (err) {
       logger.error('audio', '音频备注更新失败', err);
-      setGenerateDialog({
-        title: '备注保存失败',
-        text: err instanceof Error ? err.message : String(err),
-        tone: 'error',
-      });
+      showSaveNotice('备注名保存失败', 'error');
       throw err;
     }
   }
@@ -841,6 +840,7 @@ export default function App() {
           <main className="workspace-main">
             <MainContent
               activeNav={activeNav}
+              onNavChange={setActiveNav}
               config={config}
               setConfig={setConfig}
               savedConfigSnapshot={savedConfigSnapshot}
@@ -875,8 +875,6 @@ export default function App() {
         </div>
       </div>
 
-      {saveNotice ? <div className={`save-notice save-notice--${saveNotice.tone}`}>{saveNotice.text}</div> : null}
-
       {generateDialog ? (
         <div className="dialog-overlay" onClick={() => setGenerateDialog(null)}>
           <div className="dialog-card" onClick={e => e.stopPropagation()}>
@@ -893,12 +891,24 @@ export default function App() {
           </div>
         </div>
       ) : null}
+
+      {saveNotice ? (
+        <button
+          className={`floating-notice floating-notice--${saveNotice.tone}`}
+          type="button"
+          onClick={() => setSaveNotice(null)}
+          aria-label={saveNotice.text}
+        >
+          {saveNotice.text}
+        </button>
+      ) : null}
     </>
   );
 }
 
 interface MainContentProps {
   activeNav: NavigationItemId;
+  onNavChange: (nav: NavigationItemId) => void;
   config: AppConfig;
   setConfig: React.Dispatch<React.SetStateAction<AppConfig>>;
   savedConfigSnapshot: AppConfig;
@@ -930,10 +940,12 @@ interface MainContentProps {
   busy: GenerateBusyState;
 }
 
-function MainContent({ activeNav, config, setConfig, savedConfigSnapshot, prompts, setPrompts, transcript, streamingText, audioFiles, audioGenerationTasks, playingId, isPlaying, currentTime, currentDuration, loadingAudioId, onPlay, onSeek, onSkip, onSaveAudioDisplayName, onGenerateConv, onGenerateAudio, onRetryAudioTask, formatTaskTime, onSaveConfig, onSavePrompts, configSaveState, promptSaveState, hasUnsavedChanges, hasUnsavedPromptChanges, busy }: MainContentProps) {
+function MainContent({ activeNav, onNavChange, config, setConfig, savedConfigSnapshot, prompts, setPrompts, transcript, streamingText, audioFiles, audioGenerationTasks, playingId, isPlaying, currentTime, currentDuration, loadingAudioId, onPlay, onSeek, onSkip, onSaveAudioDisplayName, onGenerateConv, onGenerateAudio, onRetryAudioTask, formatTaskTime, onSaveConfig, onSavePrompts, configSaveState, promptSaveState, hasUnsavedChanges, hasUnsavedPromptChanges, busy }: MainContentProps) {
   switch (activeNav) {
     case 'generate':
-      return <GeneratePage config={config} prompts={prompts} transcript={transcript} streamingText={streamingText} audioGenerationTasks={audioGenerationTasks} onGenerate={onGenerateConv} onGenerateAudio={onGenerateAudio} onRetryAudioTask={onRetryAudioTask} formatTaskTime={formatTaskTime} busy={busy} />;
+      return <GeneratePage config={config} prompts={prompts} transcript={transcript} streamingText={streamingText} onGenerate={onGenerateConv} onGenerateAudio={onGenerateAudio} busy={busy} />;
+    case 'tasks':
+      return <TaskCenterPage audioGenerationTasks={audioGenerationTasks} formatTaskTime={formatTaskTime} onRetryAudioTask={onRetryAudioTask} busy={busy.generatingAudio} />;
     case 'audio':
       return (
         <div className="page-view flex-col animate-fade-in">

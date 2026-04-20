@@ -47,6 +47,21 @@ function getNoteText(file: AudioFileItem): string {
   return getDisplayName(file) || file.title;
 }
 
+function getDockTitle(file: AudioFileItem): string {
+  const fileName = (file.fileName || file.title || '').trim();
+  const displayName = getDisplayName(file);
+
+  if (!displayName) {
+    return fileName;
+  }
+
+  if (!fileName || displayName === fileName) {
+    return displayName;
+  }
+
+  return `${displayName} · ${fileName}`;
+}
+
 function AudioRow({
   file,
   selected,
@@ -281,56 +296,64 @@ export default function AudioPage({
       {selectedFile ? (
         <div className="audio-player-dock glass-panel">
           <div className="audio-player-dock__top">
-            <div className="audio-player-dock__info">
-              <div className="audio-player-dock__title">{selectedFile.fileName || selectedFile.title}</div>
-              <div className="audio-player-dock__note">{getNoteText(selectedFile)}</div>
+            <div className="audio-player-dock__header">
+              <div className="audio-player-dock__info">
+                <div className="audio-player-dock__title">{getDockTitle(selectedFile)}</div>
+              </div>
+
+              <div className="audio-player-dock__toolbar">
+                <div className="audio-player-dock__controls audio-player-dock__transport">
+                  <button
+                    className="chip-button strong-secondary audio-player-dock__transport-button audio-player-dock__transport-button--step"
+                    type="button"
+                    onClick={() => onSkip(selectedFile.id, -5)}
+                    disabled={!canSeekPlayback}
+                    aria-label="后退 5 秒"
+                  >
+                    <span className="icon-shape icon-shape--step-back" aria-hidden="true" />
+                  </button>
+                  <button
+                    className="play-toggle play-toggle--large audio-player-dock__play-button"
+                    type="button"
+                    onClick={() => void onPlay(selectedFile.id)}
+                    disabled={!canControlPlayback || loadingAudioId === selectedFile.id}
+                    aria-label={selectedIsActive && isPlaying ? '暂停播放' : '开始播放'}
+                  >
+                    <span
+                      className={`play-toggle__icon ${selectedIsActive && isPlaying ? 'is-pause' : 'is-play'}`}
+                      aria-hidden="true"
+                    />
+                  </button>
+                  <button
+                    className="chip-button strong-secondary audio-player-dock__transport-button audio-player-dock__transport-button--step"
+                    type="button"
+                    onClick={() => onSkip(selectedFile.id, 5)}
+                    disabled={!canSeekPlayback}
+                    aria-label="前进 5 秒"
+                  >
+                    <span className="icon-shape icon-shape--step-forward" aria-hidden="true" />
+                  </button>
+                </div>
+
+                <div className="audio-player-dock__time" aria-live="off">
+                  {formatTime(progressValue)} / {formatTime(playbackDuration)}
+                </div>
+              </div>
             </div>
 
-            <div className="audio-player-dock__controls">
-              <button
-                className="audio-row-item__skip-button"
-                type="button"
-                onClick={() => onSkip(selectedFile.id, -5)}
+            <div className="audio-player-dock__bottom">
+              <input
+                className="audio-player-dock__progress"
+                type="range"
+                min={0}
+                max={progressMax || 0}
+                step={1}
+                value={progressValue}
                 disabled={!canSeekPlayback}
-              >
-                -5 秒
-              </button>
-              <button
-                className="play-toggle play-toggle--large"
-                type="button"
-                onClick={() => void onPlay(selectedFile.id)}
-                disabled={!canControlPlayback || loadingAudioId === selectedFile.id}
-              >
-                <span
-                  className={`play-toggle__icon ${selectedIsActive && isPlaying ? 'is-pause' : 'is-play'}`}
-                  aria-hidden="true"
-                />
-              </button>
-              <button
-                className="audio-row-item__skip-button"
-                type="button"
-                onClick={() => onSkip(selectedFile.id, 5)}
-                disabled={!canSeekPlayback}
-              >
-                +5 秒
-              </button>
-            </div>
-
-            <div className="audio-player-dock__time">
-              {formatTime(progressValue)} / {formatTime(playbackDuration)}
+                onChange={event => onSeek(selectedFile.id, Number(event.target.value))}
+              />
             </div>
           </div>
-
-          <input
-            className="audio-player-dock__progress"
-            type="range"
-            min={0}
-            max={progressMax || 0}
-            step={1}
-            value={progressValue}
-            disabled={!canSeekPlayback}
-            onChange={event => onSeek(selectedFile.id, Number(event.target.value))}
-          />
         </div>
       ) : null}
     </div>

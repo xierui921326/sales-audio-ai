@@ -1,6 +1,7 @@
 export type RecordingState = 'idle' | 'recording' | 'processing' | 'done';
 export type NavigationItemId =
     | 'generate'
+    | 'tasks'
     | 'audio'
     | 'llm'
     | 'tts'
