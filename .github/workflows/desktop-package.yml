@@ -24,23 +24,21 @@ jobs:
               desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
               desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
           - name: macos-intel
-            os: macos-laster
+            os: macos-latest
             make_target: desktop-build-macos-intel
             rust_target: x86_64-apple-darwin
             bundle_dir: desktop/src-tauri/target/x86_64-apple-darwin/release/bundle
             release_glob: |
               desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
               desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz
-              desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
           - name: macos-arm
-            os: macos-14
+            os: macos-latest
             make_target: desktop-build-macos-arm
             rust_target: aarch64-apple-darwin
             bundle_dir: desktop/src-tauri/target/aarch64-apple-darwin/release/bundle
             release_glob: |
               desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
               desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
-              desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
 
     runs-on: ${{ matrix.os }}
 
@@ -72,39 +70,17 @@ jobs:
       - name: Build installer
         run: make ${{ matrix.make_target }}
 
-      - name: Repackage macOS app without certificate
+      - name: Remove Tauri updater signature files without Apple signing
         if: startsWith(matrix.name, 'macos')
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
 
-          app_paths=("${{ matrix.bundle_dir }}/macos"/*.app)
-
-          if [ ${#app_paths[@]} -eq 0 ]; then
-            echo '未找到 macOS .app 构建产物' >&2
-            exit 1
+          sig_paths=("${{ matrix.bundle_dir }}/macos"/*.sig)
+          if [ ${#sig_paths[@]} -gt 0 ]; then
+            rm -f "${sig_paths[@]}"
           fi
-
-          for app in "${app_paths[@]}"; do
-            app_name="$(basename "$app")"
-            app_base="${app_name%.app}"
-            app_parent="$(dirname "$app")"
-            dmg_path="${{ matrix.bundle_dir }}/dmg/${app_base}.dmg"
-            tar_path="$app_parent/${app_base}.app.tar.gz"
-
-            echo "Ad-hoc 签名: $app"
-            codesign --force --deep --sign - "$app"
-            codesign --verify --deep --strict "$app"
-
-            echo "重新打包应用归档: $tar_path"
-            rm -f "$tar_path"
-            tar -czf "$tar_path" -C "$app_parent" "$app_name"
-
-            echo "重新生成 DMG: $dmg_path"
-            rm -f "$dmg_path"
-            hdiutil create -volname "$app_base" -srcfolder "$app" -ov -format UDZO "$dmg_path"
-          done
 
       - name: Validate macOS bundles
         if: startsWith(matrix.name, 'macos')
@@ -123,9 +99,9 @@ jobs:
 
           if [ ${#app_paths[@]} -gt 0 ]; then
             for app in "${app_paths[@]}"; do
-              echo "验证签名: $app"
-              codesign -dvvv "$app"
-              codesign --verify --deep --strict "$app"
+              echo "检查应用结构: $app"
+              test -d "$app/Contents/MacOS"
+              test -f "$app/Contents/Info.plist"
             done
           fi
 
@@ -188,7 +164,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t files < <(find release-assets -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' -o -name '*.app.tar.gz' -o -name '*.sig' \))
+          mapfile -t files < <(find release-assets -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' -o -name '*.app.tar.gz' \))
 
           if [ "${#files[@]}" -eq 0 ]; then
             echo '未找到可发布的构建产物' >&2
