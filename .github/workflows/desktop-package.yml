@@ -24,7 +24,7 @@ jobs:
               desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
               desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
           - name: macos-intel
-            os: macos-13
+            os: macos-laster
             make_target: desktop-build-macos-intel
             rust_target: x86_64-apple-darwin
             bundle_dir: desktop/src-tauri/target/x86_64-apple-darwin/release/bundle
