@@ -9,6 +9,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     strategy:
@@ -41,13 +44,15 @@ jobs:
               desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
 
     runs-on: ${{ matrix.os }}
+    env:
+      CI: true
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 9
 
@@ -68,6 +73,16 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build installer
+        env:
+          APPLE_CERTIFICATE: ${{ startsWith(matrix.name, 'macos') && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ startsWith(matrix.name, 'macos') && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_ID: ${{ startsWith(matrix.name, 'macos') && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ startsWith(matrix.name, 'macos') && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ startsWith(matrix.name, 'macos') && secrets.APPLE_TEAM_ID || '' }}
+          APPLE_API_KEY: ${{ startsWith(matrix.name, 'macos') && secrets.APPLE_API_KEY || '' }}
+          APPLE_API_ISSUER: ${{ startsWith(matrix.name, 'macos') && secrets.APPLE_API_ISSUER || '' }}
+          APPLE_API_KEY_PATH: ${{ startsWith(matrix.name, 'macos') && secrets.APPLE_API_KEY_PATH || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.name, 'macos') && (secrets.APPLE_CERTIFICATE == '' && '-' || '') || '' }}
         run: make ${{ matrix.make_target }}
 
       - name: Remove Tauri updater signature files without Apple signing
@@ -102,6 +117,9 @@ jobs:
               echo "检查应用结构: $app"
               test -d "$app/Contents/MacOS"
               test -f "$app/Contents/Info.plist"
+              echo "验证代码签名: $app"
+              codesign --verify --deep --strict --verbose=2 "$app"
+              codesign -dv --verbose=4 "$app"
             done
           fi
 
@@ -111,6 +129,47 @@ jobs:
               hdiutil verify "$dmg"
             done
           fi
+
+      - name: Verify notarization when Apple credentials are configured
+        if: startsWith(matrix.name, 'macos')
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          has_apple_id_auth=false
+          has_api_key_auth=false
+
+          if [ -n "${APPLE_CERTIFICATE}" ] && [ -n "${APPLE_ID}" ] && [ -n "${APPLE_PASSWORD}" ] && [ -n "${APPLE_TEAM_ID}" ]; then
+            has_apple_id_auth=true
+          fi
+
+          if [ -n "${APPLE_CERTIFICATE}" ] && [ -n "${APPLE_API_KEY}" ] && [ -n "${APPLE_API_ISSUER}" ]; then
+            has_api_key_auth=true
+          fi
+
+          if [ "$has_apple_id_auth" != true ] && [ "$has_api_key_auth" != true ]; then
+            echo '未配置 Apple 公证凭据，跳过 notarization 校验'
+            exit 0
+          fi
+
+          app_paths=("${{ matrix.bundle_dir }}/macos"/*.app)
+          if [ ${#app_paths[@]} -eq 0 ]; then
+            echo '未找到 macOS app 产物，无法校验 notarization' >&2
+            exit 1
+          fi
+
+          for app in "${app_paths[@]}"; do
+            echo "检查 Gatekeeper 评估: $app"
+            spctl -a -vv "$app"
+          done
 
       - name: Collect build artifacts
         id: collect_artifacts
@@ -142,7 +201,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: sales-audio-ai-${{ matrix.name }}
           path: ${{ steps.collect_artifacts.outputs.files }}
@@ -155,7 +214,7 @@ jobs:
 
     steps:
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release-assets
 
