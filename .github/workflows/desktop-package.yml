@@ -220,8 +220,6 @@ jobs:
 
       - name: Build installer
         env:
-          APPLE_CERTIFICATE: ''
-          APPLE_CERTIFICATE_PASSWORD: ''
           APPLE_ID: ${{ steps.notarization_env.outputs.apple_id || '' }}
           APPLE_PASSWORD: ${{ steps.notarization_env.outputs.apple_password || '' }}
           APPLE_TEAM_ID: ${{ steps.notarization_env.outputs.apple_team_id || '' }}
@@ -229,7 +227,48 @@ jobs:
           APPLE_API_ISSUER: ${{ steps.notarization_env.outputs.apple_api_issuer || '' }}
           APPLE_API_KEY_PATH: ${{ steps.notarization_env.outputs.apple_api_key_path || '' }}
           APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.name, 'macos') && steps.signing_identity.outputs.identity || '' }}
-        run: make ${{ matrix.make_target }}
+          APPLE_CERTIFICATE_SECRET: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD_SECRET: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          unset APPLE_CERTIFICATE
+          unset APPLE_CERTIFICATE_PASSWORD
+
+          if [ "${{ steps.apple_certificate_check.outputs.use_certificate }}" = 'true' ]; then
+            export APPLE_CERTIFICATE="${APPLE_CERTIFICATE_SECRET}"
+            export APPLE_CERTIFICATE_PASSWORD="${APPLE_CERTIFICATE_PASSWORD_SECRET}"
+          fi
+
+          if [ -z "${APPLE_ID}" ]; then
+            unset APPLE_ID
+          fi
+
+          if [ -z "${APPLE_PASSWORD}" ]; then
+            unset APPLE_PASSWORD
+          fi
+
+          if [ -z "${APPLE_TEAM_ID}" ]; then
+            unset APPLE_TEAM_ID
+          fi
+
+          if [ -z "${APPLE_API_KEY}" ]; then
+            unset APPLE_API_KEY
+          fi
+
+          if [ -z "${APPLE_API_ISSUER}" ]; then
+            unset APPLE_API_ISSUER
+          fi
+
+          if [ -z "${APPLE_API_KEY_PATH}" ]; then
+            unset APPLE_API_KEY_PATH
+          fi
+
+          if [ -z "${APPLE_SIGNING_IDENTITY}" ]; then
+            unset APPLE_SIGNING_IDENTITY
+          fi
+
+          make ${{ matrix.make_target }}
 
       - name: Remove Tauri updater signature files without Apple signing
         if: startsWith(matrix.name, 'macos')
