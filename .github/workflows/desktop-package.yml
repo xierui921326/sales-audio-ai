@@ -80,8 +80,6 @@ jobs:
           shopt -s nullglob
 
           app_paths=("${{ matrix.bundle_dir }}/macos"/*.app)
-          dmg_paths=("${{ matrix.bundle_dir }}/dmg"/*.dmg)
-          updater_paths=("${{ matrix.bundle_dir }}/macos"/*.app.tar.gz)
 
           if [ ${#app_paths[@]} -eq 0 ]; then
             echo '未找到 macOS .app 构建产物' >&2
@@ -106,12 +104,6 @@ jobs:
             echo "重新生成 DMG: $dmg_path"
             rm -f "$dmg_path"
             hdiutil create -volname "$app_base" -srcfolder "$app" -ov -format UDZO "$dmg_path"
-          done
-
-          for stale in "${updater_paths[@]}"; do
-            if [ ! -f "$stale" ]; then
-              continue
-            fi
           done
 
       - name: Validate macOS bundles
