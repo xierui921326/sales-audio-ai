@@ -452,10 +452,10 @@ enum LlmStreamProtocol {
 
 impl LlmStreamProtocol {
     fn from_provider(provider: &str) -> Self {
-        if provider.trim().eq_ignore_ascii_case("anthropic") {
-            Self::AnthropicMessages
-        } else {
-            Self::OpenAiCompatible
+        match provider.trim().to_ascii_lowercase().as_str() {
+            "anthropic" => Self::AnthropicMessages,
+            "openai" | "azure" | "google" | "qwen" => Self::OpenAiCompatible,
+            _ => Self::OpenAiCompatible,
         }
     }
 }
@@ -3335,6 +3335,9 @@ async fn list_llm_models(config: AppConfig) -> Result<Vec<SelectOption>, String>
 
     if !response.status().is_success() {
         let text = response.text().await.unwrap_or_default();
+        if llm_config.provider.trim().eq_ignore_ascii_case("qwen") {
+            return Err(format!("千问模型列表接口返回失败: {}。你也可以直接手动填写模型名，例如 qwen-plus、qwen-turbo、qwen-max。", text));
+        }
         return Err(format!("模型列表接口返回失败: {}", text));
     }
 
@@ -3344,6 +3347,9 @@ async fn list_llm_models(config: AppConfig) -> Result<Vec<SelectOption>, String>
         Ok(p) => p,
         Err(e) => {
             let snippet = if text.len() > 200 { format!("{}...", text.chars().take(200).collect::<String>()) } else { text.clone() };
+            if llm_config.provider.trim().eq_ignore_ascii_case("qwen") {
+                return Err(format!("解析千问模型列表失败: {}\n返回内容: {}\n你可以直接手动填写模型名，例如 qwen-plus、qwen-turbo、qwen-max。", e, snippet));
+            }
             return Err(format!("解析模型列表失败: {}\n返回内容: {}", e, snippet));
         }
     };

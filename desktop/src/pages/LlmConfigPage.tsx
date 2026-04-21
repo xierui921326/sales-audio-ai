@@ -6,6 +6,7 @@ import { AppConfig, LlmEndpointConfig } from '../types';
 
 const LLM_PRESETS = [
   { label: 'OpenAI', provider: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+  { label: '千问 Qwen', provider: 'qwen', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
   { label: 'DeepSeek', provider: 'openai', baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' },
   { label: 'Azure OpenAI', provider: 'azure', baseUrl: '', model: '' },
   { label: 'Google Gemini', provider: 'google', baseUrl: 'https://generativelanguage.googleapis.com', model: 'gemini-1.5-pro' },
@@ -324,7 +325,7 @@ export default function LlmConfigPage({ config, setConfig, savedConfigSnapshot, 
                       type="password"
                       value={activeEndpoint.apiKey}
                       onChange={e => updateEndpoint(activeEndpoint.id, { apiKey: e.target.value })}
-                      placeholder="只需在此填写，下方配置会自动填充"
+                      placeholder={currentPreset?.label === '千问 Qwen' ? '填写阿里云 DashScope API Key' : '只需在此填写，下方配置会自动填充'}
                     />
                   </div>
 
@@ -335,7 +336,13 @@ export default function LlmConfigPage({ config, setConfig, savedConfigSnapshot, 
                       value={activeEndpoint.baseUrl}
                       disabled={!allowBaseUrlEdit}
                       onChange={e => updateEndpoint(activeEndpoint.id, { baseUrl: e.target.value })}
-                      placeholder={currentPreset?.provider === 'azure' ? 'https://{resource}.openai.azure.com' : 'https://your-api-endpoint.com'}
+                      placeholder={
+                        currentPreset?.provider === 'azure'
+                          ? 'https://{resource}.openai.azure.com'
+                          : currentPreset?.label === '千问 Qwen'
+                            ? 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+                            : 'https://your-api-endpoint.com'
+                      }
                     />
                   </div>
 
@@ -368,9 +375,14 @@ export default function LlmConfigPage({ config, setConfig, savedConfigSnapshot, 
                         className="field-control"
                         value={activeEndpoint.model}
                         onChange={e => updateEndpoint(activeEndpoint.id, { model: e.target.value })}
-                        placeholder="gpt-4o"
+                        placeholder={currentPreset?.label === '千问 Qwen' ? 'qwen-plus / qwen-turbo / qwen-max' : 'gpt-4o'}
                       />
                     )}
+                    {currentPreset?.label === '千问 Qwen' ? (
+                      <div className="field-helper-text">
+                        千问默认走 DashScope 的 OpenAI 兼容接口，可直接使用 `qwen-plus`、`qwen-turbo`、`qwen-max` 等模型名。
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 
