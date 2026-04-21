@@ -3403,9 +3403,10 @@ fn load_workspace(app: AppHandle) -> Result<WorkspaceData, String> {
 }
 
 #[tauri::command]
-fn save_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, String> {
+async fn save_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, String> {
+    let app_for_log = app.clone();
     write_backend_log(
-        &app,
+        &app_for_log,
         "info",
         "workspace",
         "desktop/src-tauri/src/lib.rs::save_config",
@@ -3419,28 +3420,148 @@ fn save_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, String> {
             config.active_prompt_id
         )),
     );
-    let mut workspace = ensure_workspace(&app)?;
-    workspace.config = config.clone();
-    ensure_prompt_defaults(&mut workspace);
-    save_workspace(&app, &workspace)?;
-    Ok(workspace.config)
+
+    let app_inside_task = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        write_backend_log(
+            &app_inside_task,
+            "info",
+            "workspace",
+            "desktop/src-tauri/src/lib.rs::save_config",
+            "进入保存工作区配置后台任务",
+            Some("stage=spawn_blocking_enter".into()),
+        );
+        write_backend_log(
+            &app_inside_task,
+            "info",
+            "workspace",
+            "desktop/src-tauri/src/lib.rs::save_config",
+            "开始准备工作区配置",
+            Some("stage=ensure_workspace_begin".into()),
+        );
+        let mut workspace = ensure_workspace(&app)?;
+        write_backend_log(
+            &app_inside_task,
+            "info",
+            "workspace",
+            "desktop/src-tauri/src/lib.rs::save_config",
+            "工作区配置准备完成",
+            Some(format!("stage=ensure_workspace_done prompt_count={}", workspace.prompts.len())),
+        );
+        workspace.config = config.clone();
+        ensure_prompt_defaults(&mut workspace);
+        write_backend_log(
+            &app_inside_task,
+            "info",
+            "workspace",
+            "desktop/src-tauri/src/lib.rs::save_config",
+            "开始写入工作区配置",
+            Some(format!(
+                "stage=save_workspace_begin llm_count={} tts_count={} active_prompt={}",
+                workspace.config.llm_endpoints.len(),
+                workspace.config.tts_endpoints.len(),
+                workspace.config.active_prompt_id
+            )),
+        );
+        save_workspace(&app, &workspace)?;
+        write_backend_log(
+            &app_inside_task,
+            "info",
+            "workspace",
+            "desktop/src-tauri/src/lib.rs::save_config",
+            "工作区配置写入完成",
+            Some("stage=save_workspace_done".into()),
+        );
+        Ok(workspace.config)
+    })
+    .await
+    .map_err(|e| format!("保存工作区配置任务执行失败: {e}"))
+    .map(|saved| {
+        write_backend_log(
+            &app_for_log,
+            "info",
+            "workspace",
+            "desktop/src-tauri/src/lib.rs::save_config",
+            "保存工作区配置命令完成",
+            Some("stage=command_done".into()),
+        );
+        saved
+    })?
 }
 
 #[tauri::command]
-fn save_prompts(app: AppHandle, prompts: Vec<PromptTemplate>) -> Result<Vec<PromptTemplate>, String> {
+async fn save_prompts(app: AppHandle, prompts: Vec<PromptTemplate>) -> Result<Vec<PromptTemplate>, String> {
+    let app_for_log = app.clone();
     write_backend_log(
-        &app,
+        &app_for_log,
         "info",
         "workspace",
         "desktop/src-tauri/src/lib.rs::save_prompts",
         "开始保存 Prompt 模板",
         Some(format!("prompt_count={}", prompts.len())),
     );
-    let mut workspace = ensure_workspace(&app)?;
-    workspace.prompts = prompts;
-    ensure_prompt_defaults(&mut workspace);
-    save_workspace(&app, &workspace)?;
-    Ok(workspace.prompts)
+
+    let app_inside_task = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        write_backend_log(
+            &app_inside_task,
+            "info",
+            "workspace",
+            "desktop/src-tauri/src/lib.rs::save_prompts",
+            "进入保存 Prompt 模板后台任务",
+            Some("stage=spawn_blocking_enter".into()),
+        );
+        write_backend_log(
+            &app_inside_task,
+            "info",
+            "workspace",
+            "desktop/src-tauri/src/lib.rs::save_prompts",
+            "开始准备 Prompt 工作区",
+            Some("stage=ensure_workspace_begin".into()),
+        );
+        let mut workspace = ensure_workspace(&app)?;
+        write_backend_log(
+            &app_inside_task,
+            "info",
+            "workspace",
+            "desktop/src-tauri/src/lib.rs::save_prompts",
+            "Prompt 工作区准备完成",
+            Some(format!("stage=ensure_workspace_done current_prompt_count={}", workspace.prompts.len())),
+        );
+        workspace.prompts = prompts;
+        ensure_prompt_defaults(&mut workspace);
+        write_backend_log(
+            &app_inside_task,
+            "info",
+            "workspace",
+            "desktop/src-tauri/src/lib.rs::save_prompts",
+            "开始写入 Prompt 模板",
+            Some(format!("stage=save_workspace_begin prompt_count={}", workspace.prompts.len())),
+        );
+        save_workspace(&app, &workspace)?;
+        write_backend_log(
+            &app_inside_task,
+            "info",
+            "workspace",
+            "desktop/src-tauri/src/lib.rs::save_prompts",
+            "Prompt 模板写入完成",
+            Some(format!("stage=save_workspace_done prompt_count={}", workspace.prompts.len())),
+        );
+        Ok(workspace.prompts)
+    })
+    .await
+    .map_err(|e| format!("保存 Prompt 模板任务执行失败: {e}"))
+    .map(|saved| {
+        write_backend_log(
+            &app_for_log,
+            "info",
+            "workspace",
+            "desktop/src-tauri/src/lib.rs::save_prompts",
+            "保存 Prompt 模板命令完成",
+            Some(format!("stage=command_done prompt_count={}", saved.len())),
+        );
+        saved
+    })?
 }
 
 #[tauri::command]
