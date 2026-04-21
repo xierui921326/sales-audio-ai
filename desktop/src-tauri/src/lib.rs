@@ -3422,7 +3422,7 @@ async fn save_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, Str
     );
 
     let app_inside_task = app.clone();
-    let saved = tauri::async_runtime::spawn_blocking(move || {
+    let saved = tauri::async_runtime::spawn_blocking(move || -> Result<AppConfig, String> {
         write_backend_log(
             &app_inside_task,
             "info",
@@ -3504,7 +3504,7 @@ async fn save_prompts(app: AppHandle, prompts: Vec<PromptTemplate>) -> Result<Ve
     );
 
     let app_inside_task = app.clone();
-    let saved = tauri::async_runtime::spawn_blocking(move || {
+    let saved = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<PromptTemplate>, String> {
         write_backend_log(
             &app_inside_task,
             "info",
