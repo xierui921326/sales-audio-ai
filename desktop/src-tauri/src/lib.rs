@@ -3759,17 +3759,27 @@ pub fn run() {
                 None,
             );
 
-            // Debug 构建下自动打开 DevTools，便于排查打包版问题
             #[cfg(debug_assertions)]
-            if let Some(main) = app.get_webview_window("main") {
-                let _ = main.open_devtools();
+            {
+                let _ = write_backend_log(
+                    &app.handle(),
+                    "info",
+                    "boot",
+                    "devtools",
+                    "Debug 模式已启用 DevTools（使用 Alt+Cmd+I 打开）",
+                    None,
+                );
             }
 
-            // 若设置环境变量 SALES_AUDIO_AI_DEBUG=1，则在任意构建下打开 DevTools
             if std::env::var("SALES_AUDIO_AI_DEBUG").map(|v| v == "1").unwrap_or(false) {
-                if let Some(main) = app.get_webview_window("main") {
-                    let _ = main.open_devtools();
-                }
+                let _ = write_backend_log(
+                    &app.handle(),
+                    "info",
+                    "boot",
+                    "devtools",
+                    "检测到 SALES_AUDIO_AI_DEBUG=1，已启用 DevTools（使用 Alt+Cmd+I 打开）",
+                    None,
+                );
             }
 
             Ok(())
