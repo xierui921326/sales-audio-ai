@@ -3422,7 +3422,7 @@ async fn save_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, Str
     );
 
     let app_inside_task = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let saved = tauri::async_runtime::spawn_blocking(move || {
         write_backend_log(
             &app_inside_task,
             "info",
@@ -3475,18 +3475,17 @@ async fn save_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, Str
         Ok(workspace.config)
     })
     .await
-    .map_err(|e| format!("保存工作区配置任务执行失败: {e}"))
-    .map(|saved| {
-        write_backend_log(
-            &app_for_log,
-            "info",
-            "workspace",
-            "desktop/src-tauri/src/lib.rs::save_config",
-            "保存工作区配置命令完成",
-            Some("stage=command_done".into()),
-        );
-        saved
-    })?
+    .map_err(|e| format!("保存工作区配置任务执行失败: {e}"))?;
+    let saved = saved.map_err(|e| format!("保存工作区配置失败: {e}"))?;
+    write_backend_log(
+        &app_for_log,
+        "info",
+        "workspace",
+        "desktop/src-tauri/src/lib.rs::save_config",
+        "保存工作区配置命令完成",
+        Some("stage=command_done".into()),
+    );
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -3502,7 +3501,7 @@ async fn save_prompts(app: AppHandle, prompts: Vec<PromptTemplate>) -> Result<Ve
     );
 
     let app_inside_task = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let saved = tauri::async_runtime::spawn_blocking(move || {
         write_backend_log(
             &app_inside_task,
             "info",
@@ -3550,18 +3549,17 @@ async fn save_prompts(app: AppHandle, prompts: Vec<PromptTemplate>) -> Result<Ve
         Ok(workspace.prompts)
     })
     .await
-    .map_err(|e| format!("保存 Prompt 模板任务执行失败: {e}"))
-    .map(|saved| {
-        write_backend_log(
-            &app_for_log,
-            "info",
-            "workspace",
-            "desktop/src-tauri/src/lib.rs::save_prompts",
-            "保存 Prompt 模板命令完成",
-            Some(format!("stage=command_done prompt_count={}", saved.len())),
-        );
-        saved
-    })?
+    .map_err(|e| format!("保存 Prompt 模板任务执行失败: {e}"))?;
+    let saved = saved.map_err(|e| format!("保存 Prompt 模板失败: {e}"))?;
+    write_backend_log(
+        &app_for_log,
+        "info",
+        "workspace",
+        "desktop/src-tauri/src/lib.rs::save_prompts",
+        "保存 Prompt 模板命令完成",
+        Some(format!("stage=command_done prompt_count={}", saved.len())),
+    );
+    Ok(saved)
 }
 
 #[tauri::command]
