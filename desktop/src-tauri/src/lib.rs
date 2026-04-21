@@ -984,6 +984,31 @@ fn app_log_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_data_dir(app)?.join("logs").join("app.log"))
 }
 
+fn initialize_app_storage(app: &AppHandle) -> Result<(), String> {
+    let data_dir = app_data_dir(app)?;
+    fs::create_dir_all(&data_dir).map_err(|e| format!("创建应用数据目录失败: {e}"))?;
+
+    let db_path = workspace_db_path(app)?;
+    if let Some(parent) = db_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建数据库目录失败: {e}"))?;
+    }
+
+    let _ = open_workspace_db(app)?;
+
+    let log_path = app_log_path(app)?;
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建日志目录失败: {e}"))?;
+    }
+
+    fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|e| format!("初始化日志文件失败: {e}"))?;
+
+    Ok(())
+}
+
 fn format_log_timestamp() -> String {
     Local::now().format("%Y-%m-%d %H:%M:%S%.3f").to_string()
 }
@@ -3586,6 +3611,11 @@ fn get_health_status(app: AppHandle) -> Result<HealthStatus, String> {
 
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            initialize_app_storage(&app.handle())
+                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             write_log,
             load_workspace,
