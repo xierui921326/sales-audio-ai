@@ -3745,8 +3745,33 @@ fn get_health_status(app: AppHandle) -> Result<HealthStatus, String> {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            // 先初始化应用存储
             initialize_app_storage(&app.handle())
                 .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+
+            // 记录一条 setup 成功日志
+            let _ = write_backend_log(
+                &app.handle(),
+                "info",
+                "boot",
+                "desktop/src-tauri/src/lib.rs::run.setup",
+                "Tauri 应用 setup 已执行",
+                None,
+            );
+
+            // Debug 构建下自动打开 DevTools，便于排查打包版问题
+            #[cfg(debug_assertions)]
+            if let Some(main) = app.get_webview_window("main") {
+                let _ = main.open_devtools();
+            }
+
+            // 若设置环境变量 SALES_AUDIO_AI_DEBUG=1，则在任意构建下打开 DevTools
+            if std::env::var("SALES_AUDIO_AI_DEBUG").map(|v| v == "1").unwrap_or(false) {
+                if let Some(main) = app.get_webview_window("main") {
+                    let _ = main.open_devtools();
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

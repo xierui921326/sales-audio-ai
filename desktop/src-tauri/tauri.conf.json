@@ -11,6 +11,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Sales Audio AI",
         "width": 1100,
         "height": 760,
