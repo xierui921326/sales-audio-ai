@@ -3,20 +3,11 @@ import { invoke } from '@tauri-apps/api/core';
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 const PREFIX = '[sales-audio-ai]';
-const FRONTEND_ROOT = 'desktop/src/';
 const DEFAULT_FRONTEND_LOCATION = 'desktop/src';
 
 function formatTimestamp(date = new Date()): string {
   const pad = (value: number, size = 2) => String(value).padStart(size, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
-}
-
-function normalizeCallerLocation(_stackLine: string): string | undefined {
-  return undefined;
-}
-
-function resolveCallerLocation(): string | undefined {
-  return undefined;
 }
 
 function print(level: LogLevel, scope: string, location: string, message: string, payload?: unknown) {

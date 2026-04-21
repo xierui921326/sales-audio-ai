@@ -2,6 +2,19 @@ name: Desktop Package
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag (e.g. v1.0.0 or v1.0.0-rc.1). Leave empty to auto-generate.'
+        required: false
+        default: ''
+      prerelease:
+        description: 'Mark as prerelease (true/false)'
+        required: false
+        default: 'true'
+      draft:
+        description: 'Create as draft (true/false)'
+        required: false
+        default: 'false'
   push:
     tags:
       - 'v*'
@@ -394,11 +407,23 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-latest
 
     steps:
+      - name: Compute release tag (for manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        id: release_tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.release_tag }}"
+          if [ -z "${tag}" ]; then
+            tag="v${GITHUB_RUN_NUMBER}"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
       - name: Download all build artifacts
         uses: actions/download-artifact@v8
         with:
@@ -427,3 +452,7 @@ jobs:
         with:
           files: ${{ steps.collect_files.outputs.files }}
           generate_release_notes: true
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || steps.release_tag.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ inputs.prerelease == 'true' || inputs.prerelease == true }}
+          draft: ${{ inputs.draft == 'true' || inputs.draft == true }}
