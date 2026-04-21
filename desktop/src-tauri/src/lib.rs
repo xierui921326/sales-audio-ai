@@ -3476,7 +3476,10 @@ async fn save_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, Str
     })
     .await
     .map_err(|e| format!("保存工作区配置任务执行失败: {e}"))?;
-    let saved = saved.map_err(|e| format!("保存工作区配置失败: {e}"))?;
+    let saved = match saved {
+        Ok(v) => v,
+        Err(e) => return Err(format!("保存工作区配置失败: {e}")),
+    };
     write_backend_log(
         &app_for_log,
         "info",
@@ -3550,7 +3553,10 @@ async fn save_prompts(app: AppHandle, prompts: Vec<PromptTemplate>) -> Result<Ve
     })
     .await
     .map_err(|e| format!("保存 Prompt 模板任务执行失败: {e}"))?;
-    let saved = saved.map_err(|e| format!("保存 Prompt 模板失败: {e}"))?;
+    let saved = match saved {
+        Ok(v) => v,
+        Err(e) => return Err(format!("保存 Prompt 模板失败: {e}")),
+    };
     write_backend_log(
         &app_for_log,
         "info",
