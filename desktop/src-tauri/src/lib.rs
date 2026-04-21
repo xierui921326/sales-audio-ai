@@ -1006,6 +1006,8 @@ fn initialize_app_storage(app: &AppHandle) -> Result<(), String> {
         .open(&log_path)
         .map_err(|e| format!("初始化日志文件失败: {e}"))?;
 
+    let _ = ensure_workspace(app)?;
+
     Ok(())
 }
 

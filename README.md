@@ -353,6 +353,29 @@ FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 4. 检查 workflow 中的 `codesign` 和 `spctl` 日志
 5. 再把 Release 产物发给用户
 
+## 桌面端接入千问 Qwen
+
+如果你想在桌面端的 LLM 配置里接入千问，可以直接使用应用里已经内置好的 `千问 Qwen` 预设。
+
+### 推荐配置
+
+- `供应商`：`千问 Qwen`
+- `API Key`：填写阿里云 DashScope API Key
+- `Base URL`：`https://dashscope.aliyuncs.com/compatible-mode/v1`
+- `Model`：推荐先用 `qwen-plus`
+
+### 可选模型示例
+
+- `qwen-plus`
+- `qwen-turbo`
+- `qwen-max`
+
+### 说明
+
+- 当前桌面端对千问走的是 DashScope 的 OpenAI 兼容接口
+- 如果“获取模型”接口没有返回列表，也可以直接手动填写模型名
+- 一般情况下不需要手动修改 `Base URL`
+
 ## Apple 证书导出与 GitHub Secrets 配置教程
 
 如果 GitHub Actions 在 macOS 打包时出现下面这类错误：
