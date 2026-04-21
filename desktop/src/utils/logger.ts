@@ -11,51 +11,12 @@ function formatTimestamp(date = new Date()): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
 }
 
-function normalizeCallerLocation(stackLine: string): string | undefined {
-  const match = stackLine.match(/(https?:\/\/[^)\s]+|\/[^)\s]+):(\d+):(\d+)/);
-  if (!match) {
-    return undefined;
-  }
-
-  const source = match[1];
-  const line = match[2];
-  const column = match[3];
-  const rootIndex = source.indexOf(FRONTEND_ROOT);
-  if (rootIndex >= 0) {
-    return `${source.slice(rootIndex)}:${line}:${column}`;
-  }
-
-  const url = new URL(source);
-  const pathname = decodeURIComponent(url.pathname);
-  const pathIndex = pathname.indexOf('/src/');
-  if (pathIndex >= 0) {
-    return `desktop${pathname.slice(pathIndex)}:${line}:${column}`;
-  }
-
+function normalizeCallerLocation(_stackLine: string): string | undefined {
   return undefined;
 }
 
 function resolveCallerLocation(): string | undefined {
-  const stack = new Error().stack;
-  if (!stack) {
-    return undefined;
-  }
-
-  const lines = stack.split('\n').map(line => line.trim());
-  const callerLine = lines.find(
-    line =>
-      line &&
-      !line.includes('resolveCallerLocation') &&
-      !line.includes('normalizeCallerLocation') &&
-      !line.includes('writeToLocalFile') &&
-      !line.includes('print(') &&
-      !line.includes('print@') &&
-      !line.includes('log (') &&
-      !line.includes('log@') &&
-      !line.includes('logger.ts')
-  );
-
-  return callerLine ? normalizeCallerLocation(callerLine) : undefined;
+  return undefined;
 }
 
 function print(level: LogLevel, scope: string, location: string, message: string, payload?: unknown) {
@@ -111,7 +72,7 @@ function writeToLocalFile(level: LogLevel, scope: string, location: string, mess
 }
 
 function log(level: LogLevel, scope: string, message: string, payload?: unknown) {
-  const location = resolveCallerLocation() ?? DEFAULT_FRONTEND_LOCATION;
+  const location = DEFAULT_FRONTEND_LOCATION;
   print(level, scope, location, message, payload);
   writeToLocalFile(level, scope, location, message, payload);
 }
