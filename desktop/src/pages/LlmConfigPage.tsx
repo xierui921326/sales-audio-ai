@@ -427,11 +427,6 @@ export default function LlmConfigPage({ config, setConfig, savedConfigSnapshot, 
           onClose={modelFetchDialog.mode === 'result' ? () => setModelFetchDialog(null) : undefined}
           closeOnOverlay={modelFetchDialog.mode === 'result'}
           size="compact"
-          actions={modelFetchDialog.mode === 'result' ? (
-            <button className="chip-button is-active" onClick={() => setModelFetchDialog(null)} type="button">
-              我知道了
-            </button>
-          ) : null}
         />
       ) : null}
     </div>

@@ -614,6 +614,14 @@
   padding: 22px;
 }
 
+.dialog-card--compact .dialog-header {
+  gap: 12px;
+}
+
+.dialog-card--compact .dialog-heading {
+  gap: 8px;
+}
+
 .dialog-header {
   display: flex;
   flex-direction: column;
@@ -641,10 +649,12 @@
   align-items: center;
   justify-content: center;
   min-height: 28px;
-  padding: 0 10px;
+  padding: 0 12px;
   border-radius: 999px;
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 700;
+  line-height: 1;
+  border: 1px solid transparent;
 }
 
 .dialog-close {
@@ -654,18 +664,18 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: var(--text-secondary);
-  background: var(--surface-muted);
-  border: 1px solid rgba(31, 42, 68, 0.08);
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
   border-radius: 999px;
   cursor: pointer;
   transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 }
 
 .dialog-close:hover {
-  color: var(--text-primary);
-  background: #f8fbff;
-  border-color: rgba(47, 128, 255, 0.16);
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+  border-color: rgba(31, 42, 68, 0.1);
 }
 
 .dialog-close:active {
@@ -681,21 +691,25 @@
 .dialog-badge--success {
   color: var(--green);
   background: var(--green-soft);
+  border-color: rgba(37, 182, 106, 0.16);
 }
 
 .dialog-badge--error {
   color: var(--danger);
   background: var(--danger-soft);
+  border-color: rgba(232, 93, 117, 0.16);
 }
 
 .dialog-badge--info {
   color: var(--blue-dark);
   background: var(--blue-soft);
+  border-color: rgba(47, 128, 255, 0.14);
 }
 
 .dialog-badge--advisory {
-  color: #8b6a11;
-  background: #fff7df;
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-color: rgba(242, 175, 43, 0.18);
 }
 
 .dialog-title {
@@ -706,6 +720,11 @@
   color: var(--text-primary);
 }
 
+.dialog-card--compact .dialog-title {
+  font-size: 18px;
+  line-height: 1.35;
+}
+
 .dialog-description {
   font-size: 14px;
   line-height: 1.75;
@@ -713,6 +732,11 @@
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
+}
+
+.dialog-card--compact .dialog-description {
+  font-size: 13px;
+  line-height: 1.65;
 }
 
 .dialog-body {

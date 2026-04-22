@@ -170,7 +170,11 @@ type ParsedGenerateDialogContent = {
   severity: 'default' | 'advisory';
   summary: string;
   detail: string | null;
+  detailCopyText: string | null;
 };
+
+const REMOTE_SERVICE_FAILURE_PREFIX = '远程模型返回失败:';
+const REMOTE_DETAIL_DISPLAY_LIMIT = 960;
 
 function padDatePart(value: number): string {
   return String(value).padStart(2, '0');
@@ -187,6 +191,14 @@ function formatDateTimeCN(value: string): string {
 
 function normalizeDialogText(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
+}
+
+function truncateDialogText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength).trimEnd()}……（内容较长，复制可获取完整返回）`;
 }
 
 function stripRequestIdFromMessage(value: string): string {
@@ -213,45 +225,205 @@ function readStringField(value: unknown, key: string): string {
   return typeof field === 'string' ? field : '';
 }
 
-function parseRemoteServiceError(rawText: string): ParsedGenerateDialogContent | null {
-  const jsonStart = rawText.indexOf('{');
-  const jsonEnd = rawText.lastIndexOf('}');
+function stripWrappingQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length < 2) {
+    return trimmed;
+  }
+
+  const firstChar = trimmed[0];
+  const lastChar = trimmed[trimmed.length - 1];
+  if ((firstChar === '"' || firstChar === '\'') && firstChar === lastChar) {
+    return trimmed.slice(1, -1).trim();
+  }
+
+  return trimmed;
+}
+
+function extractRequestId(value: string): string {
+  const requestIdMatch = value.match(/request id:\s*([^\)\s]+)/i);
+  return requestIdMatch?.[1]?.trim() ?? '';
+}
+
+function readRequestIdField(value: unknown): string {
+  return readStringField(value, 'requestId') || readStringField(value, 'request_id') || readStringField(value, 'request-id');
+}
+
+function extractRemoteServiceResponse(rawText: string): string {
+  const prefixIndex = rawText.indexOf(REMOTE_SERVICE_FAILURE_PREFIX);
+  const responseText = prefixIndex >= 0 ? rawText.slice(prefixIndex + REMOTE_SERVICE_FAILURE_PREFIX.length) : rawText;
+  return stripWrappingQuotes(responseText);
+}
+
+function parseEmbeddedJson(value: string): unknown | null {
+  const jsonStart = value.indexOf('{');
+  const jsonEnd = value.lastIndexOf('}');
   if (jsonStart === -1 || jsonEnd <= jsonStart) {
     return null;
   }
 
   try {
-    const parsed = JSON.parse(rawText.slice(jsonStart, jsonEnd + 1)) as unknown;
-    const errorPayload = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>).error : null;
-    const message = normalizeDialogText(readStringField(errorPayload, 'message'));
-    const summaryMessage = stripRequestIdFromMessage(message) || message;
-    const type = readStringField(errorPayload, 'type');
-    const code = readStringField(errorPayload, 'code');
-    const requestIdMatch = message.match(/request id:\s*([^\)]+)/i);
-    const requestId = requestIdMatch?.[1]?.trim() ?? '';
-    const severity = getRemoteServiceSeverity(code, summaryMessage);
-
-    if (!summaryMessage && !code && !type) {
-      return null;
-    }
-
-    const detailMessage = message ? `服务返回：${message}` : '';
-
-    const detailLines = [
-      code ? `错误码：${code}` : '',
-      type ? `错误类型：${type}` : '',
-      requestId ? `请求标识：${requestId}` : '',
-      detailMessage,
-    ].filter(Boolean);
-
-    return {
-      severity,
-      summary: '生成对话失败，远程模型返回失败。',
-      detail: detailLines.join('\n') || null,
-    };
+    return JSON.parse(value.slice(jsonStart, jsonEnd + 1)) as unknown;
   } catch {
     return null;
   }
+}
+
+function detectRemoteServiceResponseFormat(value: string, parsed: unknown): 'JSON' | 'HTML' | '文本' {
+  if (parsed !== null) {
+    return 'JSON';
+  }
+
+  const normalizedValue = value.trim().toLowerCase();
+  if (normalizedValue.startsWith('<!doctype html') || normalizedValue.startsWith('<html') || normalizedValue.includes('<html')) {
+    return 'HTML';
+  }
+
+  return '文本';
+}
+
+function formatRemoteServiceDisplayText(value: string, responseFormat: 'JSON' | 'HTML' | '文本'): string {
+  const normalizedValue = normalizeDialogText(value);
+  if (!normalizedValue) {
+    return '';
+  }
+
+  const maxLength = responseFormat === 'HTML' ? REMOTE_DETAIL_DISPLAY_LIMIT : REMOTE_DETAIL_DISPLAY_LIMIT * 2;
+  return truncateDialogText(normalizedValue, maxLength);
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, '\'')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&amp;/gi, '&')
+    .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number.parseInt(code, 10)));
+}
+
+function extractHtmlTitle(value: string): string {
+  const titleMatch = value.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  if (!titleMatch) {
+    return '';
+  }
+
+  return normalizeDialogText(decodeHtmlEntities(titleMatch[1] ?? ''));
+}
+
+function extractJsonResponseSummary(args: { code: string; type: string; message: string }): string {
+  const { code, type, message } = args;
+  const normalizedCode = normalizeDialogText(code);
+  const normalizedType = normalizeDialogText(type);
+  const normalizedMessage = normalizeDialogText(message);
+
+  if (normalizedCode && normalizedMessage) {
+    if (normalizedCode.toLowerCase() === normalizedMessage.toLowerCase()) {
+      return normalizedCode;
+    }
+
+    if (normalizedMessage.toLowerCase().includes(normalizedCode.toLowerCase())) {
+      return normalizedMessage;
+    }
+
+    return `${normalizedCode}：${normalizedMessage}`;
+  }
+
+  if (normalizedCode) {
+    return normalizedCode;
+  }
+
+  if (normalizedMessage) {
+    return normalizedMessage;
+  }
+
+  return normalizedType;
+}
+
+function extractRemoteServiceResponseSummary(args: {
+  responseFormat: 'JSON' | 'HTML' | '文本';
+  code: string;
+  type: string;
+  summaryMessage: string;
+  rawServiceResponse: string;
+}): string {
+  const { responseFormat, code, type, summaryMessage, rawServiceResponse } = args;
+  if (responseFormat === 'HTML') {
+    return extractHtmlTitle(rawServiceResponse);
+  }
+
+  if (responseFormat === 'JSON') {
+    return extractJsonResponseSummary({ code, type, message: summaryMessage });
+  }
+
+  return '';
+}
+
+function buildRemoteServiceDetailLines(args: {
+  code: string;
+  type: string;
+  requestId: string;
+  responseFormat: 'JSON' | 'HTML' | '文本';
+  responseSummary: string;
+  serviceResponse: string;
+}): string[] {
+  const { code, type, requestId, responseFormat, responseSummary, serviceResponse } = args;
+  return [
+    code ? `错误码：${code}` : '',
+    type ? `错误类型：${type}` : '',
+    requestId ? `请求标识：${requestId}` : '',
+    `返回格式：${responseFormat}`,
+    responseSummary ? `关键信息：${responseSummary}` : '',
+    serviceResponse ? `原始返回：${serviceResponse}` : '',
+  ].filter(Boolean);
+}
+
+function parseRemoteServiceError(rawText: string): ParsedGenerateDialogContent {
+  const responseText = extractRemoteServiceResponse(rawText);
+  const parsed = parseEmbeddedJson(responseText);
+  const payload = typeof parsed === 'object' && parsed !== null
+    ? ((parsed as Record<string, unknown>).error ?? parsed)
+    : null;
+  const message = normalizeDialogText(readStringField(payload, 'message'));
+  const summaryMessage = stripRequestIdFromMessage(message) || message;
+  const code = normalizeDialogText(readStringField(payload, 'code'));
+  const type = normalizeDialogText(readStringField(payload, 'type'));
+  const requestId = readRequestIdField(payload) || extractRequestId(message) || extractRequestId(responseText);
+  const rawServiceResponse = responseText.trim() || rawText.trim();
+  const responseFormat = detectRemoteServiceResponseFormat(rawServiceResponse, parsed);
+  const responseSummary = extractRemoteServiceResponseSummary({
+    responseFormat,
+    code,
+    type,
+    summaryMessage,
+    rawServiceResponse,
+  });
+  const displayServiceResponse = summaryMessage || formatRemoteServiceDisplayText(rawServiceResponse, responseFormat);
+  const severity = getRemoteServiceSeverity(code, summaryMessage || rawServiceResponse);
+  const detailLines = buildRemoteServiceDetailLines({
+    code,
+    type,
+    requestId,
+    responseFormat,
+    responseSummary,
+    serviceResponse: displayServiceResponse,
+  });
+  const detailCopyLines = buildRemoteServiceDetailLines({
+    code,
+    type,
+    requestId,
+    responseFormat,
+    responseSummary,
+    serviceResponse: rawServiceResponse,
+  });
+
+  return {
+    severity,
+    summary: '生成对话失败，远程模型返回失败。',
+    detail: detailLines.join('\n') || `原始返回：${displayServiceResponse || rawText.trim()}`,
+    detailCopyText: detailCopyLines.join('\n') || `原始返回：${rawText.trim()}`,
+  };
 }
 
 function copyTextToClipboard(text: string): Promise<void> {
@@ -264,21 +436,24 @@ function getGenerateDialogContent(dialog: NonNullable<GenerateDialogState>): Par
       severity: 'default',
       summary: dialog.text,
       detail: null,
+      detailCopyText: null,
     };
   }
 
-  if (dialog.text.includes('远程模型返回失败')) {
-    const parsed = parseRemoteServiceError(dialog.text);
-    if (parsed) {
-      return parsed;
-    }
+  if (dialog.text.includes(REMOTE_SERVICE_FAILURE_PREFIX)) {
+    return parseRemoteServiceError(dialog.text);
   }
 
   return {
     severity: 'default',
     summary: dialog.text,
     detail: null,
+    detailCopyText: null,
   };
+}
+
+function isRemoteServiceFailureDialog(dialog: NonNullable<GenerateDialogState>): boolean {
+  return dialog.tone === 'error' && dialog.text.includes(REMOTE_SERVICE_FAILURE_PREFIX);
 }
 
 let initialAudioGenerationResourcesPromise: Promise<{ records: AudioFileItem[]; tasks: AudioGenerationTaskItem[] }> | null = null;
@@ -323,6 +498,7 @@ export default function App() {
   const generateDialogDetailContentRef = useRef<HTMLDivElement | null>(null);
   const displayTranscript = useMemo(() => buildDisplayTranscript(transcript, displayStreamingText), [transcript, displayStreamingText]);
   const generateDialogContent = useMemo(() => (generateDialog ? getGenerateDialogContent(generateDialog) : null), [generateDialog]);
+  const generateDialogUsesDiagnosticLayout = useMemo(() => (generateDialog ? isRemoteServiceFailureDialog(generateDialog) : false), [generateDialog]);
 
   const syncGenerateDialogDetailViewport = useCallback(() => {
     const detailElement = generateDialogDetailContentRef.current;
@@ -468,7 +644,10 @@ export default function App() {
       return;
     }
 
-    const textToCopy = [generateDialogContent.summary, generateDialogContent.detail].filter(Boolean).join('\n\n');
+    const textToCopy = [
+      generateDialogContent.summary,
+      generateDialogContent.detailCopyText ?? generateDialogContent.detail,
+    ].filter(Boolean).join('\n\n');
 
     try {
       await copyTextToClipboard(textToCopy);
@@ -705,10 +884,12 @@ export default function App() {
       {generateDialog ? (
         <Dialog
           tone={generateDialog.tone === 'error' && generateDialogContent?.severity === 'advisory' ? 'advisory' : generateDialog.tone}
+          title={generateDialogUsesDiagnosticLayout ? undefined : generateDialog.title}
           description={generateDialogContent?.summary ?? generateDialog.text}
           onClose={() => setGenerateDialog(null)}
+          size={generateDialogUsesDiagnosticLayout ? 'default' : 'compact'}
         >
-          {generateDialogContent?.detail ? (
+          {generateDialogUsesDiagnosticLayout && generateDialogContent?.detail ? (
             <div className="dialog-detail-panel">
               <div className="dialog-detail">
                 <div className="dialog-detail-header">

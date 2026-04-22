@@ -448,11 +448,6 @@ export default function TtsConfigPage({ config, setConfig, savedConfigSnapshot, 
           description={saveDialog.text}
           onClose={() => setSaveDialog(null)}
           size="compact"
-          actions={(
-            <button className="chip-button is-active" onClick={() => setSaveDialog(null)} type="button">
-              我知道了
-            </button>
-          )}
         />
       ) : null}
     </div>
