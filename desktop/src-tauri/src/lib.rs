@@ -885,6 +885,10 @@ async fn list_tts_voices_inner(app: &AppHandle, config: &AppConfig) -> Result<Ve
     Ok(voices)
 }
 
+const AUDIO_SEGMENT_EDGE_FADE_MS: u32 = 12;
+const AUDIO_SEGMENT_MAX_LEADING_TRIM_MS: u32 = 80;
+const AUDIO_SEGMENT_LEADING_SILENCE_THRESHOLD: u16 = 128;
+
 fn is_mp3_audio(bytes: &[u8]) -> bool {
     bytes.starts_with(b"ID3") || (bytes.len() >= 2 && bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0)
 }
@@ -963,6 +967,69 @@ fn decode_wav_to_samples(bytes: &[u8]) -> Result<(hound::WavSpec, Vec<i16>), Str
     Ok((spec, samples))
 }
 
+fn frame_count_for_duration_ms(spec: &hound::WavSpec, duration_ms: u32) -> usize {
+    if duration_ms == 0 {
+        return 0;
+    }
+
+    (((spec.sample_rate as u64) * (duration_ms as u64)) / 1000) as usize
+}
+
+fn trim_segment_leading_silence(mut samples: Vec<i16>, spec: &hound::WavSpec) -> Vec<i16> {
+    let channels = usize::from(spec.channels.max(1));
+    let total_frames = samples.len() / channels;
+    if total_frames == 0 {
+        return samples;
+    }
+
+    let max_trim_frames = frame_count_for_duration_ms(spec, AUDIO_SEGMENT_MAX_LEADING_TRIM_MS).min(total_frames);
+    let trim_frames = samples
+        .chunks_exact(channels)
+        .take(max_trim_frames)
+        .take_while(|frame| frame.iter().all(|sample| sample.unsigned_abs() <= AUDIO_SEGMENT_LEADING_SILENCE_THRESHOLD))
+        .count();
+
+    let trim_samples = trim_frames * channels;
+    if trim_samples == 0 || trim_samples >= samples.len() {
+        return samples;
+    }
+
+    samples.drain(..trim_samples);
+    samples
+}
+
+fn scale_pcm_sample(sample: i16, gain: f32) -> i16 {
+    ((sample as f32) * gain)
+        .round()
+        .clamp(i16::MIN as f32, i16::MAX as f32) as i16
+}
+
+fn apply_segment_edge_fade(samples: &mut [i16], spec: &hound::WavSpec) {
+    let channels = usize::from(spec.channels.max(1));
+    let total_frames = samples.len() / channels;
+    if total_frames < 2 {
+        return;
+    }
+
+    let fade_frames = frame_count_for_duration_ms(spec, AUDIO_SEGMENT_EDGE_FADE_MS).min(total_frames / 2);
+    if fade_frames == 0 {
+        return;
+    }
+
+    let fade_denominator = fade_frames as f32;
+    for frame_idx in 0..fade_frames {
+        let fade_in_gain = (frame_idx as f32) / fade_denominator;
+        let fade_out_gain = ((fade_frames - frame_idx) as f32) / fade_denominator;
+        let start_index = frame_idx * channels;
+        let end_index = (total_frames - fade_frames + frame_idx) * channels;
+
+        for channel_idx in 0..channels {
+            samples[start_index + channel_idx] = scale_pcm_sample(samples[start_index + channel_idx], fade_in_gain);
+            samples[end_index + channel_idx] = scale_pcm_sample(samples[end_index + channel_idx], fade_out_gain);
+        }
+    }
+}
+
 fn merge_audio_segments_to_wav(path: &Path, chunks: &[Vec<u8>]) -> Result<(), String> {
     if chunks.is_empty() {
         return Err("没有可合并的音频片段".into());
@@ -977,6 +1044,8 @@ fn merge_audio_segments_to_wav(path: &Path, chunks: &[Vec<u8>]) -> Result<(), St
         } else {
             decode_wav_to_samples(chunk)?
         };
+        let mut normalized_samples = trim_segment_leading_silence(samples, &spec);
+        apply_segment_edge_fade(&mut normalized_samples, &spec);
         if let Some(existing) = &target_spec {
             if existing.channels != spec.channels || existing.sample_rate != spec.sample_rate {
                 return Err("音频片段采样率或声道数不一致，暂时无法合并".into());
@@ -984,7 +1053,7 @@ fn merge_audio_segments_to_wav(path: &Path, chunks: &[Vec<u8>]) -> Result<(), St
         } else {
             target_spec = Some(spec);
         }
-        merged_samples.extend(samples);
+        merged_samples.extend(normalized_samples);
     }
 
     let spec = target_spec.ok_or_else(|| "未找到可用音频规格".to_string())?;
