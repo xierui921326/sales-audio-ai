@@ -2,7 +2,7 @@
 
 from collections.abc import Generator
 
-from loguru import logger
+from core.logger import logger
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 

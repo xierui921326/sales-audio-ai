@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "identifier": "com.xier.sales-audio-ai",
   "build": {
-    "beforeDevCommand": "pnpm dev --host 127.0.0.1 --port 4173",
+    "beforeDevCommand": "node ./scripts/dev-or-reuse.mjs",
     "beforeBuildCommand": "pnpm build",
     "devUrl": "http://127.0.0.1:4173",
     "frontendDist": "../dist"

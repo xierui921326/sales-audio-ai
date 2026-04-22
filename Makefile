@@ -8,7 +8,7 @@
 BACKEND_DIR := backend
 DESKTOP_DIR := desktop
 PYTHON      := python3
-UVICORN     := uvicorn
+UVICORN     := $(PYTHON) -m uvicorn
 TAURI_CLI   := pnpm tauri
 
 TAURI_WINDOWS_TARGET   := x86_64-pc-windows-msvc
@@ -28,7 +28,7 @@ help: ## 显示所有可用命令
 # -----------------------------------------------------------
 .PHONY: backend-install
 backend-install: ## 安装后端 Python 依赖
-	cd $(BACKEND_DIR) && pip install -r requirements.txt
+	cd $(BACKEND_DIR) && $(PYTHON) -m pip install -r requirements.txt
 
 .PHONY: backend-env
 backend-env: ## 从 .env.example 初始化 .env 配置文件

@@ -1,6 +1,6 @@
 """LLM 服务：封装大语言模型调用，支持多模型扩展。"""
 
-from loguru import logger
+from core.logger import logger
 
 from core.config import settings
 

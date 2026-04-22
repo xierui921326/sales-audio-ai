@@ -599,6 +599,34 @@ fn write_backend_log_line(
     message: &str,
     payload: Option<&str>,
 ) {
+    let parse_level = |v: &str| -> u8 {
+        match v {
+            "debug" => 0,
+            "info" => 1,
+            "warn" => 2,
+            "error" => 3,
+            _ => 3,
+        }
+    };
+    let default_level = if cfg!(debug_assertions) {
+        parse_level("debug")
+    } else {
+        parse_level("info")
+    };
+    let min_level = std::env::var("SALES_AUDIO_AI_LOG_LEVEL")
+        .ok()
+        .map(|v| parse_level(v.trim()))
+        .or_else(|| {
+            if std::env::var("SALES_AUDIO_AI_DEBUG").map(|v| v == "1").unwrap_or(false) {
+                Some(parse_level("debug"))
+            } else {
+                None
+            }
+        })
+        .unwrap_or(default_level);
+    if parse_level(level) < min_level {
+        return;
+    }
     let payload_suffix = payload
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -2719,6 +2747,11 @@ fn to_log_json<T: Serialize + ?Sized>(value: &T) -> String {
         .unwrap_or_else(|error| format!("<serialize failed: {}>", error))
 }
 
+fn to_log_value<T: Serialize + ?Sized>(value: &T) -> serde_json::Value {
+    serde_json::to_value(value)
+        .unwrap_or_else(|error| serde_json::Value::String(format!("<serialize failed: {}>", error)))
+}
+
 fn mask_secret(value: &str) -> String {
     if value.is_empty() {
         return String::new();
@@ -2835,12 +2868,7 @@ fn log_generate_conversation_request(app: &AppHandle, input: &GenerateConversati
         "generate",
         "desktop/src-tauri/src/lib.rs::generate_conversation",
         "开始生成对话",
-        Some(build_log_payload(&[(
-            "request",
-            serde_json::to_value(input).unwrap_or_else(|error| {
-                serde_json::Value::String(format!("<serialize failed: {}>", error))
-            }),
-        )])),
+        Some(build_log_payload(&[("request", to_log_value(input))])),
     );
 }
 
@@ -2868,9 +2896,7 @@ fn log_transcript_parse_success(
             ),
             (
                 "transcript",
-                serde_json::to_value(transcript).unwrap_or_else(|error| {
-                    serde_json::Value::String(format!("<serialize failed: {}>", error))
-                }),
+                to_log_value(transcript),
             ),
         ])),
     );
@@ -2887,9 +2913,7 @@ fn log_generate_conversation_result(app: &AppHandle, request_id: &str, output: &
             ("requestId", serde_json::Value::String(request_id.to_string())),
             (
                 "response",
-                serde_json::to_value(output).unwrap_or_else(|error| {
-                    serde_json::Value::String(format!("<serialize failed: {}>", error))
-                }),
+                to_log_value(output),
             ),
         ])),
     );
@@ -2928,9 +2952,7 @@ fn build_llm_request_log_payload(
         ),
         (
             "input",
-            serde_json::to_value(input).unwrap_or_else(|error| {
-                serde_json::Value::String(format!("<serialize failed: {}>", error))
-            }),
+            to_log_value(input),
         ),
         ("body", request_body.clone()),
     ])
@@ -3749,29 +3771,16 @@ pub fn run() {
             initialize_app_storage(&app.handle())
                 .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
-            // 记录一条 setup 成功日志
-            let _ = write_backend_log(
-                &app.handle(),
-                "info",
-                "boot",
-                "desktop/src-tauri/src/lib.rs::run.setup",
-                "Tauri 应用 setup 已执行",
-                None,
-            );
-
-            #[cfg(debug_assertions)]
-            {
+            if std::env::var("SALES_AUDIO_AI_DEBUG").map(|v| v == "1").unwrap_or(false) {
                 let _ = write_backend_log(
                     &app.handle(),
                     "info",
                     "boot",
-                    "devtools",
-                    "Debug 模式已启用 DevTools（使用 Alt+Cmd+I 打开）",
+                    "desktop/src-tauri/src/lib.rs::run.setup",
+                    "Tauri 应用 setup 已执行",
                     None,
                 );
-            }
 
-            if std::env::var("SALES_AUDIO_AI_DEBUG").map(|v| v == "1").unwrap_or(false) {
                 let _ = write_backend_log(
                     &app.handle(),
                     "info",

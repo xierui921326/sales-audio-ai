@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-from loguru import logger
+from core.logger import logger
 
 from core.config import settings
 

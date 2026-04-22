@@ -78,13 +78,22 @@ export default function TtsConfigPage({ config, setConfig, savedConfigSnapshot, 
 
     setLoadingVoices(true);
     try {
+      logger.info('tts-config', '开始拉取音色列表', {
+        endpointId: activeEndpoint.id,
+        provider: activeEndpoint.provider,
+      });
       const requestConfig = {
         ...config,
         activeTtsId: activeEndpoint.id,
       };
+      // 使用当前选中的 endpoint 作为临时 activeTtsId，确保后端按目标配置拉取音色。
       const options = await invoke<Array<{ label: string; value: string }>>('list_tts_voices', { config: requestConfig });
       const voices = Array.isArray(options) ? options.map(option => option?.value || option?.label).filter(Boolean) : [];
       const uniq = Array.from(new Set(voices));
+      logger.info('tts-config', '音色列表拉取完成', {
+        endpointId: activeEndpoint.id,
+        voiceCount: uniq.length,
+      });
 
       setVoiceOptionsByEndpoint(prev => ({
         ...prev,
@@ -98,7 +107,11 @@ export default function TtsConfigPage({ config, setConfig, savedConfigSnapshot, 
         });
       }
     } catch (error) {
-      logger.error('tts-config', '获取音色列表失败', error);
+      logger.error('tts-config', '获取音色列表失败', {
+        endpointId: activeEndpoint.id,
+        provider: activeEndpoint.provider,
+        message: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       setLoadingVoices(false);
     }

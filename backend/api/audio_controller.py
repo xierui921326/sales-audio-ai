@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
-from loguru import logger
+from core.logger import logger
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 

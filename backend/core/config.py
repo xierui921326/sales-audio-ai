@@ -5,7 +5,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from loguru import logger
+from core.logger import logger
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 

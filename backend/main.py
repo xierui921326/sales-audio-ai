@@ -9,7 +9,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from loguru import logger
+from core.logger import logger
 
 from api.audio_controller import router as audio_router
 from api.config_controller import router as config_router

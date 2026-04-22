@@ -1,9 +1,9 @@
-"""对话解析服务：将 LLM 返回的原始文本解析为结构化列表。"""
+"""对话解析服务：将 LLM 原始文本解析为结构化角色+文案列表。"""
 
 import re
 from typing import TypedDict
 
-from loguru import logger
+from core.logger import logger
 
 
 class DialogLine(TypedDict):

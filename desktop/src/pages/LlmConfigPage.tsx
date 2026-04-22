@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import ConfigPlaceholder from '../components/config/ConfigPlaceholder';
 import ConfigSelect from '../components/config/ConfigSelect';
+import { logger } from '../utils/logger';
 import { AppConfig, LlmEndpointConfig } from '../types';
 
 const LLM_PRESETS = [
@@ -106,13 +107,22 @@ export default function LlmConfigPage({ config, setConfig, savedConfigSnapshot, 
     });
 
     try {
+      logger.info('llm-config', '开始拉取模型列表', {
+        endpointId: activeEndpoint.id,
+        provider: activeEndpoint.provider,
+      });
       const requestConfig = {
         ...config,
         activeLlmId: activeEndpoint.id,
       };
+      // 使用当前选中的 endpoint 作为临时 activeLlmId，确保后端按目标配置请求模型列表。
       const options = await invoke<Array<{ label: string; value: string; badge?: string }>>('list_llm_models', { config: requestConfig });
       const list = Array.isArray(options) ? options.map(o => o?.value || o?.label).filter(Boolean) : [];
       const uniq = Array.from(new Set(list));
+      logger.info('llm-config', '模型列表拉取完成', {
+        endpointId: activeEndpoint.id,
+        modelCount: uniq.length,
+      });
 
       setModelOptionsByEndpoint(prev => ({
         ...prev,
@@ -142,6 +152,12 @@ export default function LlmConfigPage({ config, setConfig, savedConfigSnapshot, 
         message.includes('/models') || message.includes('模型列表接口')
           ? `当前供应商暂不兼容标准 /models 接口，或返回格式不符合预期。\n\n详细信息：${message}`
           : message;
+
+      logger.error('llm-config', '模型列表拉取失败', {
+        endpointId: activeEndpoint.id,
+        provider: activeEndpoint.provider,
+        message,
+      });
 
       setModelFetchDialog({
         tone: 'error',

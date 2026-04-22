@@ -5,7 +5,7 @@ import wave
 from pathlib import Path
 
 import edge_tts
-from loguru import logger
+from core.logger import logger
 from pydub import AudioSegment
 
 from core.config import settings

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from loguru import logger
+from core.logger import logger
 from pydub import AudioSegment
 
 from core.config import settings

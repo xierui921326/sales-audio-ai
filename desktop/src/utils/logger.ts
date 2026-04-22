@@ -4,6 +4,16 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 const PREFIX = '[sales-audio-ai]';
 const DEFAULT_FRONTEND_LOCATION = 'desktop/src';
+const LEVEL_ORDER: LogLevel[] = ['debug', 'info', 'warn', 'error'];
+const ENV = (import.meta as unknown as { env?: { DEV?: boolean; VITE_LOG_LEVEL?: string } }).env;
+const DEFAULT_LEVEL: LogLevel = ENV?.DEV ? 'debug' : 'info';
+const ENV_LEVEL = ENV?.VITE_LOG_LEVEL;
+const MIN_LEVEL: LogLevel = ENV_LEVEL === 'debug' || ENV_LEVEL === 'info' || ENV_LEVEL === 'warn' || ENV_LEVEL === 'error' ? (ENV_LEVEL as LogLevel) : DEFAULT_LEVEL;
+
+// 根据环境或显式配置控制前端日志最低输出级别。
+function shouldLog(level: LogLevel): boolean {
+  return LEVEL_ORDER.indexOf(level) >= LEVEL_ORDER.indexOf(MIN_LEVEL);
+}
 
 function formatTimestamp(date = new Date()): string {
   const pad = (value: number, size = 2) => String(value).padStart(size, '0');
@@ -49,6 +59,9 @@ function stringifyPayload(payload?: unknown): string | undefined {
 }
 
 function writeToLocalFile(level: LogLevel, scope: string, location: string, message: string, payload?: unknown) {
+  if (!shouldLog(level)) {
+    return;
+  }
   invoke('write_log', {
     input: {
       level,
@@ -63,6 +76,9 @@ function writeToLocalFile(level: LogLevel, scope: string, location: string, mess
 }
 
 function log(level: LogLevel, scope: string, message: string, payload?: unknown) {
+  if (!shouldLog(level)) {
+    return;
+  }
   const location = DEFAULT_FRONTEND_LOCATION;
   print(level, scope, location, message, payload);
   writeToLocalFile(level, scope, location, message, payload);

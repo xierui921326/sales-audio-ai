@@ -1,7 +1,7 @@
 """对话生成 API 控制器。"""
 
 from fastapi import APIRouter, Depends, HTTPException
-from loguru import logger
+from core.logger import logger
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
