@@ -566,12 +566,14 @@
 }
 
 .dialog-card {
-  width: min(460px, 100%);
-  padding: 20px;
+  width: min(560px, 100%);
+  max-height: min(80vh, 640px);
+  padding: 24px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 16px;
   box-shadow: var(--shadow);
+  overflow: hidden;
 }
 
 .dialog-card--notice {
@@ -608,6 +610,11 @@
   background: var(--blue-soft);
 }
 
+.dialog-badge--advisory {
+  color: #8b6a11;
+  background: #fff7df;
+}
+
 .dialog-title {
   font-size: 18px;
   font-weight: 800;
@@ -619,8 +626,10 @@
 }
 
 .dialog-text {
-  margin-top: 10px;
-  white-space: pre-wrap;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
   line-height: 1.6;
   font-size: 13px;
   color: var(--text-secondary);
@@ -628,6 +637,91 @@
 
 .dialog-text--notice {
   margin-top: 8px;
+}
+
+.dialog-summary {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.dialog-detail {
+  padding: 12px 14px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.dialog-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dialog-detail-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.dialog-detail-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.dialog-detail-toggle,
+.dialog-detail-copy {
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.dialog-detail-toggle:hover,
+.dialog-detail-copy:hover {
+  background: #f8fbff;
+  border-color: var(--border-strong);
+}
+
+.dialog-detail-toggle:active,
+.dialog-detail-copy:active {
+  transform: scale(0.98);
+}
+
+.dialog-detail-copy--success {
+  color: var(--green);
+  border-color: rgba(37, 182, 106, 0.22);
+  background: var(--green-soft);
+}
+
+.dialog-detail-copy--error {
+  color: var(--danger);
+  border-color: rgba(232, 93, 117, 0.22);
+  background: var(--danger-soft);
+}
+
+.dialog-detail-content {
+  margin-top: 10px;
+  max-height: min(26vh, 220px);
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-secondary);
 }
 
 .dialog-loading-inline {
@@ -648,7 +742,7 @@
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
-  margin-top: 16px;
+  margin-top: 20px;
 }
 
 .path-display {

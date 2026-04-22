@@ -165,6 +165,12 @@ type SaveNoticeState = {
   tone: 'success' | 'error';
 } | null;
 
+type ParsedGenerateDialogContent = {
+  severity: 'default' | 'advisory';
+  summary: string;
+  detail: string | null;
+};
+
 function padDatePart(value: number): string {
   return String(value).padStart(2, '0');
 }
@@ -176,6 +182,87 @@ function formatDateTimeCN(value: string): string {
   }
 
   return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${padDatePart(date.getHours())}:${padDatePart(date.getMinutes())}:${padDatePart(date.getSeconds())}`;
+}
+
+function normalizeDialogText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function readStringField(value: unknown, key: string): string {
+  if (typeof value !== 'object' || value === null) {
+    return '';
+  }
+
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === 'string' ? field : '';
+}
+
+function parseRemoteServiceError(rawText: string): ParsedGenerateDialogContent | null {
+  const jsonStart = rawText.indexOf('{');
+  const jsonEnd = rawText.lastIndexOf('}');
+  if (jsonStart === -1 || jsonEnd <= jsonStart) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(rawText.slice(jsonStart, jsonEnd + 1)) as unknown;
+    const errorPayload = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>).error : null;
+    const message = normalizeDialogText(readStringField(errorPayload, 'message'));
+    const type = readStringField(errorPayload, 'type');
+    const code = readStringField(errorPayload, 'code');
+    const requestIdMatch = message.match(/request id:\s*([^\)]+)/i);
+    const requestId = requestIdMatch?.[1]?.trim() ?? '';
+
+    const detailLines = [
+      code ? `错误码：${code}` : '',
+      type ? `错误类型：${type}` : '',
+      requestId ? `请求标识：${requestId}` : '',
+      message ? `服务返回：${message}` : '',
+    ].filter(Boolean);
+
+    if (code === 'sensitive_words_detected' || message.includes('sensitive_words_detected')) {
+      return {
+        severity: 'advisory',
+        summary: '当前输入内容触发了模型服务的内容安全校验，请调整“对话场景”或“补充要求”后再试。',
+        detail: detailLines.join('\n') || null,
+      };
+    }
+
+    return {
+      severity: 'default',
+      summary: '模型服务拒绝了本次请求，请检查输入内容、模型配置，或稍后重试。',
+      detail: detailLines.join('\n') || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function copyTextToClipboard(text: string): Promise<void> {
+  return navigator.clipboard.writeText(text);
+}
+
+function getGenerateDialogContent(dialog: NonNullable<GenerateDialogState>): ParsedGenerateDialogContent {
+  if (dialog.tone !== 'error') {
+    return {
+      severity: 'default',
+      summary: dialog.text,
+      detail: null,
+    };
+  }
+
+  if (dialog.text.includes('远程模型返回失败')) {
+    const parsed = parseRemoteServiceError(dialog.text);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return {
+    severity: 'default',
+    summary: dialog.text,
+    detail: null,
+  };
 }
 
 let initialAudioGenerationResourcesPromise: Promise<{ records: AudioFileItem[]; tasks: AudioGenerationTaskItem[] }> | null = null;
@@ -214,7 +301,10 @@ export default function App() {
   const [audioGenerationTasks, setAudioGenerationTasks] = useState<AudioGenerationTaskItem[]>([]);
   const [generateDialog, setGenerateDialog] = useState<GenerateDialogState>(null);
   const [saveNotice, setSaveNotice] = useState<SaveNoticeState>(null);
+  const [generateDialogDetailExpanded, setGenerateDialogDetailExpanded] = useState(false);
+  const [generateDialogCopyState, setGenerateDialogCopyState] = useState<'idle' | 'success' | 'error'>('idle');
   const displayTranscript = useMemo(() => buildDisplayTranscript(transcript, displayStreamingText), [transcript, displayStreamingText]);
+  const generateDialogContent = useMemo(() => (generateDialog ? getGenerateDialogContent(generateDialog) : null), [generateDialog]);
 
   useEffect(() => {
     let cancelled = false;
@@ -238,6 +328,25 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    setGenerateDialogDetailExpanded(false);
+    setGenerateDialogCopyState('idle');
+  }, [generateDialog]);
+
+  useEffect(() => {
+    if (generateDialogCopyState === 'idle') {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setGenerateDialogCopyState('idle');
+    }, 1800);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [generateDialogCopyState]);
 
   const reloadAudioGenerationTasks = useCallback(async () => {
     try {
@@ -298,6 +407,21 @@ export default function App() {
     setBusy,
     upsertTranscriptSegment,
   });
+
+  async function handleCopyGenerateDialogDetail() {
+    if (!generateDialog || !generateDialogContent?.detail) {
+      return;
+    }
+
+    const textToCopy = [generateDialog.title, generateDialogContent.summary, generateDialogContent.detail].filter(Boolean).join('\n\n');
+
+    try {
+      await copyTextToClipboard(textToCopy);
+      setGenerateDialogCopyState('success');
+    } catch {
+      setGenerateDialogCopyState('error');
+    }
+  }
 
   useEffect(() => {
     if (!streamingText) {
@@ -526,11 +650,45 @@ export default function App() {
       {generateDialog ? (
         <div className="dialog-overlay" onClick={() => setGenerateDialog(null)}>
           <div className="dialog-card" onClick={e => e.stopPropagation()}>
-            <div className={`dialog-badge dialog-badge--${generateDialog.tone}`}>
-              {generateDialog.tone === 'success' ? '成功' : generateDialog.tone === 'info' ? '提示' : '错误'}
+            <div className={`dialog-badge dialog-badge--${generateDialog.tone === 'error' && generateDialogContent?.severity === 'advisory' ? 'advisory' : generateDialog.tone}`}>
+              {generateDialog.tone === 'success'
+                ? '成功'
+                : generateDialog.tone === 'info'
+                  ? '提示'
+                  : generateDialogContent?.severity === 'advisory'
+                    ? '提醒'
+                    : '错误'}
             </div>
             <div className="dialog-title">{generateDialog.title}</div>
-            <div className="dialog-text">{generateDialog.text}</div>
+            <div className="dialog-text">
+              <div className="dialog-summary">{generateDialogContent?.summary ?? generateDialog.text}</div>
+              {generateDialogContent?.detail ? (
+                <div className="dialog-detail">
+                  <div className="dialog-detail-header">
+                    <div className="dialog-detail-label">详细信息</div>
+                    <div className="dialog-detail-controls">
+                      <button
+                        className="dialog-detail-toggle"
+                        type="button"
+                        onClick={() => setGenerateDialogDetailExpanded(current => !current)}
+                      >
+                        {generateDialogDetailExpanded ? '收起详情' : '查看详情'}
+                      </button>
+                      <button
+                        className={`dialog-detail-copy dialog-detail-copy--${generateDialogCopyState}`}
+                        type="button"
+                        onClick={() => void handleCopyGenerateDialogDetail()}
+                      >
+                        {generateDialogCopyState === 'success' ? '已复制' : generateDialogCopyState === 'error' ? '复制失败' : '复制详情'}
+                      </button>
+                    </div>
+                  </div>
+                  {generateDialogDetailExpanded ? (
+                    <div className="dialog-detail-content">{generateDialogContent.detail}</div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
             <div className="dialog-actions">
               <button className="chip-button is-active" onClick={() => setGenerateDialog(null)} type="button">
                 我知道了

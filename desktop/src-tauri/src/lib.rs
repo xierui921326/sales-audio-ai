@@ -3263,6 +3263,13 @@ async fn call_remote_llm(app: &AppHandle, config: &AppConfig, input: &GenerateCo
     Ok(output)
 }
 
+#[tauri::command]
+async fn generate_conversation(app: AppHandle, input: GenerateConversationInput) -> Result<GenerateConversationOutput, String> {
+    log_generate_conversation_request(&app, &input);
+    let workspace = ensure_workspace(&app)?;
+    call_remote_llm(&app, &workspace.config, &input).await
+}
+
 fn build_export_text(transcript: &[TranscriptSegment], audio_files: &[AudioFileItem]) -> String {
     format!(
         "对话文本\n{}\n\n音频文件\n{}",
@@ -3443,72 +3450,56 @@ async fn save_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, Str
         )),
     );
 
-    let app_inside_task = app.clone();
     let saved = tauri::async_runtime::spawn_blocking(move || -> Result<AppConfig, String> {
-        write_backend_log(
-            &app_inside_task,
-            "info",
-            "workspace",
-            "desktop/src-tauri/src/lib.rs::save_config",
-            "进入保存工作区配置后台任务",
-            Some("stage=spawn_blocking_enter".into()),
-        );
-        write_backend_log(
-            &app_inside_task,
-            "info",
-            "workspace",
-            "desktop/src-tauri/src/lib.rs::save_config",
-            "开始准备工作区配置",
-            Some("stage=ensure_workspace_begin".into()),
-        );
         let mut workspace = ensure_workspace(&app)?;
-        write_backend_log(
-            &app_inside_task,
-            "info",
-            "workspace",
-            "desktop/src-tauri/src/lib.rs::save_config",
-            "工作区配置准备完成",
-            Some(format!("stage=ensure_workspace_done prompt_count={}", workspace.prompts.len())),
-        );
         workspace.config = config.clone();
         ensure_prompt_defaults(&mut workspace);
-        write_backend_log(
-            &app_inside_task,
-            "info",
-            "workspace",
-            "desktop/src-tauri/src/lib.rs::save_config",
-            "开始写入工作区配置",
-            Some(format!(
-                "stage=save_workspace_begin llm_count={} tts_count={} active_prompt={}",
-                workspace.config.llm_endpoints.len(),
-                workspace.config.tts_endpoints.len(),
-                workspace.config.active_prompt_id
-            )),
-        );
         save_workspace(&app, &workspace)?;
-        write_backend_log(
-            &app_inside_task,
-            "info",
-            "workspace",
-            "desktop/src-tauri/src/lib.rs::save_config",
-            "工作区配置写入完成",
-            Some("stage=save_workspace_done".into()),
-        );
         Ok(workspace.config)
     })
-    .await
-    .map_err(|e| format!("保存工作区配置任务执行失败: {e}"))?;
+    .await;
     let saved = match saved {
         Ok(v) => v,
-        Err(e) => return Err(format!("保存工作区配置失败: {e}")),
+        Err(e) => {
+            write_backend_log(
+                &app_for_log,
+                "error",
+                "workspace",
+                "desktop/src-tauri/src/lib.rs::save_config",
+                "保存工作区配置任务执行失败",
+                Some(e.to_string()),
+            );
+            return Err(format!("保存工作区配置任务执行失败: {e}"));
+        }
+    };
+    let saved = match saved {
+        Ok(v) => v,
+        Err(e) => {
+            write_backend_log(
+                &app_for_log,
+                "error",
+                "workspace",
+                "desktop/src-tauri/src/lib.rs::save_config",
+                "保存工作区配置失败",
+                Some(e.clone()),
+            );
+            return Err(format!("保存工作区配置失败: {e}"));
+        }
     };
     write_backend_log(
         &app_for_log,
         "info",
         "workspace",
         "desktop/src-tauri/src/lib.rs::save_config",
-        "保存工作区配置命令完成",
-        Some("stage=command_done".into()),
+        "保存工作区配置成功",
+        Some(format!(
+            "llm_count={} tts_count={} active_llm={} active_tts={} active_prompt={}",
+            saved.llm_endpoints.len(),
+            saved.tts_endpoints.len(),
+            saved.active_llm_id,
+            saved.active_tts_id,
+            saved.active_prompt_id
+        )),
     );
     Ok(saved)
 }
@@ -3525,76 +3516,51 @@ async fn save_prompts(app: AppHandle, prompts: Vec<PromptTemplate>) -> Result<Ve
         Some(format!("prompt_count={}", prompts.len())),
     );
 
-    let app_inside_task = app.clone();
     let saved = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<PromptTemplate>, String> {
-        write_backend_log(
-            &app_inside_task,
-            "info",
-            "workspace",
-            "desktop/src-tauri/src/lib.rs::save_prompts",
-            "进入保存 Prompt 模板后台任务",
-            Some("stage=spawn_blocking_enter".into()),
-        );
-        write_backend_log(
-            &app_inside_task,
-            "info",
-            "workspace",
-            "desktop/src-tauri/src/lib.rs::save_prompts",
-            "开始准备 Prompt 工作区",
-            Some("stage=ensure_workspace_begin".into()),
-        );
         let mut workspace = ensure_workspace(&app)?;
-        write_backend_log(
-            &app_inside_task,
-            "info",
-            "workspace",
-            "desktop/src-tauri/src/lib.rs::save_prompts",
-            "Prompt 工作区准备完成",
-            Some(format!("stage=ensure_workspace_done current_prompt_count={}", workspace.prompts.len())),
-        );
         workspace.prompts = prompts;
         ensure_prompt_defaults(&mut workspace);
-        write_backend_log(
-            &app_inside_task,
-            "info",
-            "workspace",
-            "desktop/src-tauri/src/lib.rs::save_prompts",
-            "开始写入 Prompt 模板",
-            Some(format!("stage=save_workspace_begin prompt_count={}", workspace.prompts.len())),
-        );
         save_workspace(&app, &workspace)?;
-        write_backend_log(
-            &app_inside_task,
-            "info",
-            "workspace",
-            "desktop/src-tauri/src/lib.rs::save_prompts",
-            "Prompt 模板写入完成",
-            Some(format!("stage=save_workspace_done prompt_count={}", workspace.prompts.len())),
-        );
         Ok(workspace.prompts)
     })
-    .await
-    .map_err(|e| format!("保存 Prompt 模板任务执行失败: {e}"))?;
+    .await;
     let saved = match saved {
         Ok(v) => v,
-        Err(e) => return Err(format!("保存 Prompt 模板失败: {e}")),
+        Err(e) => {
+            write_backend_log(
+                &app_for_log,
+                "error",
+                "workspace",
+                "desktop/src-tauri/src/lib.rs::save_prompts",
+                "保存 Prompt 模板任务执行失败",
+                Some(e.to_string()),
+            );
+            return Err(format!("保存 Prompt 模板任务执行失败: {e}"));
+        }
+    };
+    let saved = match saved {
+        Ok(v) => v,
+        Err(e) => {
+            write_backend_log(
+                &app_for_log,
+                "error",
+                "workspace",
+                "desktop/src-tauri/src/lib.rs::save_prompts",
+                "保存 Prompt 模板失败",
+                Some(e.clone()),
+            );
+            return Err(format!("保存 Prompt 模板失败: {e}"));
+        }
     };
     write_backend_log(
         &app_for_log,
         "info",
         "workspace",
         "desktop/src-tauri/src/lib.rs::save_prompts",
-        "保存 Prompt 模板命令完成",
-        Some(format!("stage=command_done prompt_count={}", saved.len())),
+        "保存 Prompt 模板成功",
+        Some(format!("prompt_count={}", saved.len())),
     );
     Ok(saved)
-}
-
-#[tauri::command]
-async fn generate_conversation(app: AppHandle, input: GenerateConversationInput) -> Result<GenerateConversationOutput, String> {
-    log_generate_conversation_request(&app, &input);
-    let workspace = ensure_workspace(&app)?;
-    call_remote_llm(&app, &workspace.config, &input).await
 }
 
 #[tauri::command]
@@ -3669,20 +3635,12 @@ fn export_zip(app: AppHandle, transcript: Vec<TranscriptSegment>, audio_files: V
     let data_dir = app_data_dir(&app)?;
     let export_path = data_dir
         .join("exports")
-        .join(format!("sales_audio_ai_export_{}.zip", Local::now().timestamp()));
-    write_zip_file(&export_path, &transcript, &audio_files)?;
-    Ok(export_path.to_string_lossy().to_string())
-}
-
-#[tauri::command]
-async fn save_zip_as(app: AppHandle, transcript: Vec<TranscriptSegment>, audio_files: Vec<AudioFileItem>) -> Result<String, String> {
-    let data_dir = app_data_dir(&app)?;
-    let default_path = data_dir.join("exports").join("sales_audio_ai_export.zip");
+        .join(format!("sales_audio_ai_export_{}.zip", unique_batch_id()));
     let selected = app
         .dialog()
         .file()
         .set_file_name(
-            default_path
+            export_path
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or("sales_audio_ai_export.zip"),
@@ -3807,7 +3765,6 @@ pub fn run() {
             generate_audio,
             retry_audio_generation_task,
             export_zip,
-            save_zip_as,
             pick_path,
             get_health_status,
         ])
