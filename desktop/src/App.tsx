@@ -189,6 +189,21 @@ function normalizeDialogText(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+function stripRequestIdFromMessage(value: string): string {
+  return value.replace(/\s*\(?request id:\s*[^)]+\)?/gi, '').replace(/\s+/g, ' ').trim();
+}
+
+function getRemoteServiceSeverity(code: string, summaryMessage: string): ParsedGenerateDialogContent['severity'] {
+  const normalizedCode = code.toLowerCase();
+  const normalizedMessage = summaryMessage.toLowerCase();
+
+  if (normalizedCode === 'sensitive_words_detected' || normalizedMessage.includes('sensitive_words_detected')) {
+    return 'advisory';
+  }
+
+  return 'default';
+}
+
 function readStringField(value: unknown, key: string): string {
   if (typeof value !== 'object' || value === null) {
     return '';
@@ -209,29 +224,29 @@ function parseRemoteServiceError(rawText: string): ParsedGenerateDialogContent |
     const parsed = JSON.parse(rawText.slice(jsonStart, jsonEnd + 1)) as unknown;
     const errorPayload = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>).error : null;
     const message = normalizeDialogText(readStringField(errorPayload, 'message'));
+    const summaryMessage = stripRequestIdFromMessage(message) || message;
     const type = readStringField(errorPayload, 'type');
     const code = readStringField(errorPayload, 'code');
     const requestIdMatch = message.match(/request id:\s*([^\)]+)/i);
     const requestId = requestIdMatch?.[1]?.trim() ?? '';
+    const severity = getRemoteServiceSeverity(code, summaryMessage);
+
+    if (!summaryMessage && !code && !type) {
+      return null;
+    }
+
+    const detailMessage = message ? `服务返回：${message}` : '';
 
     const detailLines = [
       code ? `错误码：${code}` : '',
       type ? `错误类型：${type}` : '',
       requestId ? `请求标识：${requestId}` : '',
-      message ? `服务返回：${message}` : '',
+      detailMessage,
     ].filter(Boolean);
 
-    if (code === 'sensitive_words_detected' || message.includes('sensitive_words_detected')) {
-      return {
-        severity: 'advisory',
-        summary: '当前输入内容触发了模型服务的内容安全校验，请调整“对话场景”或“补充要求”后再试。',
-        detail: detailLines.join('\n') || null,
-      };
-    }
-
     return {
-      severity: 'default',
-      summary: '模型服务拒绝了本次请求，请检查输入内容、模型配置，或稍后重试。',
+      severity,
+      summary: '生成对话失败，远程模型返回失败。',
       detail: detailLines.join('\n') || null,
     };
   } catch {
@@ -453,7 +468,7 @@ export default function App() {
       return;
     }
 
-    const textToCopy = [generateDialog.title, generateDialogContent.summary, generateDialogContent.detail].filter(Boolean).join('\n\n');
+    const textToCopy = [generateDialogContent.summary, generateDialogContent.detail].filter(Boolean).join('\n\n');
 
     try {
       await copyTextToClipboard(textToCopy);
@@ -690,14 +705,8 @@ export default function App() {
       {generateDialog ? (
         <Dialog
           tone={generateDialog.tone === 'error' && generateDialogContent?.severity === 'advisory' ? 'advisory' : generateDialog.tone}
-          title={generateDialog.title}
           description={generateDialogContent?.summary ?? generateDialog.text}
           onClose={() => setGenerateDialog(null)}
-          actions={(
-            <button className="chip-button is-active" onClick={() => setGenerateDialog(null)} type="button">
-              我知道了
-            </button>
-          )}
         >
           {generateDialogContent?.detail ? (
             <div className="dialog-detail-panel">

@@ -4,7 +4,7 @@ export type DialogTone = 'success' | 'error' | 'info' | 'advisory';
 
 interface DialogProps {
   tone: DialogTone;
-  title: string;
+  title?: string;
   description?: React.ReactNode;
   children?: React.ReactNode;
   actions?: React.ReactNode;
@@ -33,6 +33,7 @@ export default function Dialog({
   const titleId = useId();
   const descriptionId = useId();
   const handleOverlayClick = closeOnOverlay && onClose ? onClose : undefined;
+  const hasHeadingContent = Boolean(title || description);
 
   return (
     <div className="dialog-overlay" onClick={handleOverlayClick}>
@@ -40,7 +41,7 @@ export default function Dialog({
         className={`dialog-card ${size === 'compact' ? 'dialog-card--compact' : ''}`}
         role="dialog"
         aria-modal="true"
-        aria-labelledby={titleId}
+        aria-labelledby={title ? titleId : undefined}
         aria-describedby={description ? descriptionId : undefined}
         onClick={event => event.stopPropagation()}
       >
@@ -53,10 +54,12 @@ export default function Dialog({
               </button>
             ) : null}
           </div>
-          <div className="dialog-heading">
-            <div className="dialog-title" id={titleId}>{title}</div>
-            {description ? <div className="dialog-description" id={descriptionId}>{description}</div> : null}
-          </div>
+          {hasHeadingContent ? (
+            <div className="dialog-heading">
+              {title ? <div className="dialog-title" id={titleId}>{title}</div> : null}
+              {description ? <div className="dialog-description" id={descriptionId}>{description}</div> : null}
+            </div>
+          ) : null}
         </div>
         {children ? <div className="dialog-body">{children}</div> : null}
         {actions ? <div className="dialog-actions">{actions}</div> : null}
