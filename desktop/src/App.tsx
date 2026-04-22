@@ -1,7 +1,8 @@
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import Sidebar from './components/layout/Sidebar';
 import StorageHeader from './components/config/StorageHeader';
+import Dialog from './components/Dialog';
 import GeneratePage from './pages/GeneratePage';
 import TaskCenterPage from './pages/TaskCenterPage';
 import AudioPage from './pages/AudioPage';
@@ -301,10 +302,27 @@ export default function App() {
   const [audioGenerationTasks, setAudioGenerationTasks] = useState<AudioGenerationTaskItem[]>([]);
   const [generateDialog, setGenerateDialog] = useState<GenerateDialogState>(null);
   const [saveNotice, setSaveNotice] = useState<SaveNoticeState>(null);
-  const [generateDialogDetailExpanded, setGenerateDialogDetailExpanded] = useState(false);
   const [generateDialogCopyState, setGenerateDialogCopyState] = useState<'idle' | 'success' | 'error'>('idle');
+  const [generateDialogDetailHasOverflow, setGenerateDialogDetailHasOverflow] = useState(false);
+  const [generateDialogDetailAtBottom, setGenerateDialogDetailAtBottom] = useState(true);
+  const generateDialogDetailContentRef = useRef<HTMLDivElement | null>(null);
   const displayTranscript = useMemo(() => buildDisplayTranscript(transcript, displayStreamingText), [transcript, displayStreamingText]);
   const generateDialogContent = useMemo(() => (generateDialog ? getGenerateDialogContent(generateDialog) : null), [generateDialog]);
+
+  const syncGenerateDialogDetailViewport = useCallback(() => {
+    const detailElement = generateDialogDetailContentRef.current;
+    if (!detailElement) {
+      setGenerateDialogDetailHasOverflow(false);
+      setGenerateDialogDetailAtBottom(true);
+      return;
+    }
+
+    const hasOverflow = detailElement.scrollHeight - detailElement.clientHeight > 2;
+    const atBottom = !hasOverflow || detailElement.scrollTop + detailElement.clientHeight >= detailElement.scrollHeight - 2;
+
+    setGenerateDialogDetailHasOverflow(hasOverflow);
+    setGenerateDialogDetailAtBottom(atBottom);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -330,9 +348,31 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    setGenerateDialogDetailExpanded(false);
     setGenerateDialogCopyState('idle');
   }, [generateDialog]);
+
+  useEffect(() => {
+    if (!generateDialogContent?.detail) {
+      setGenerateDialogDetailHasOverflow(false);
+      setGenerateDialogDetailAtBottom(true);
+      return;
+    }
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      const detailElement = generateDialogDetailContentRef.current;
+      if (detailElement) {
+        detailElement.scrollTop = 0;
+      }
+      syncGenerateDialogDetailViewport();
+    });
+
+    window.addEventListener('resize', syncGenerateDialogDetailViewport);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.removeEventListener('resize', syncGenerateDialogDetailViewport);
+    };
+  }, [generateDialogContent?.detail, syncGenerateDialogDetailViewport]);
 
   useEffect(() => {
     if (generateDialogCopyState === 'idle') {
@@ -648,54 +688,48 @@ export default function App() {
       </div>
 
       {generateDialog ? (
-        <div className="dialog-overlay" onClick={() => setGenerateDialog(null)}>
-          <div className="dialog-card" onClick={e => e.stopPropagation()}>
-            <div className={`dialog-badge dialog-badge--${generateDialog.tone === 'error' && generateDialogContent?.severity === 'advisory' ? 'advisory' : generateDialog.tone}`}>
-              {generateDialog.tone === 'success'
-                ? '成功'
-                : generateDialog.tone === 'info'
-                  ? '提示'
-                  : generateDialogContent?.severity === 'advisory'
-                    ? '提醒'
-                    : '错误'}
-            </div>
-            <div className="dialog-title">{generateDialog.title}</div>
-            <div className="dialog-text">
-              <div className="dialog-summary">{generateDialogContent?.summary ?? generateDialog.text}</div>
-              {generateDialogContent?.detail ? (
-                <div className="dialog-detail">
-                  <div className="dialog-detail-header">
-                    <div className="dialog-detail-label">详细信息</div>
-                    <div className="dialog-detail-controls">
-                      <button
-                        className="dialog-detail-toggle"
-                        type="button"
-                        onClick={() => setGenerateDialogDetailExpanded(current => !current)}
-                      >
-                        {generateDialogDetailExpanded ? '收起详情' : '查看详情'}
-                      </button>
-                      <button
-                        className={`dialog-detail-copy dialog-detail-copy--${generateDialogCopyState}`}
-                        type="button"
-                        onClick={() => void handleCopyGenerateDialogDetail()}
-                      >
-                        {generateDialogCopyState === 'success' ? '已复制' : generateDialogCopyState === 'error' ? '复制失败' : '复制详情'}
-                      </button>
-                    </div>
+        <Dialog
+          tone={generateDialog.tone === 'error' && generateDialogContent?.severity === 'advisory' ? 'advisory' : generateDialog.tone}
+          title={generateDialog.title}
+          description={generateDialogContent?.summary ?? generateDialog.text}
+          onClose={() => setGenerateDialog(null)}
+          actions={(
+            <button className="chip-button is-active" onClick={() => setGenerateDialog(null)} type="button">
+              我知道了
+            </button>
+          )}
+        >
+          {generateDialogContent?.detail ? (
+            <div className="dialog-detail-panel">
+              <div className="dialog-detail">
+                <div className="dialog-detail-header">
+                  <div className="dialog-detail-label">技术细节</div>
+                  <button
+                    className={`dialog-detail-copy-link dialog-detail-copy-link--${generateDialogCopyState}`}
+                    type="button"
+                    onClick={() => void handleCopyGenerateDialogDetail()}
+                    aria-label={generateDialogCopyState === 'success' ? '技术细节已复制' : generateDialogCopyState === 'error' ? '复制技术细节失败' : '复制技术细节'}
+                    title={generateDialogCopyState === 'success' ? '已复制' : generateDialogCopyState === 'error' ? '复制失败' : '复制'}
+                  >
+                    <span className="icon-shape icon-shape--copy" aria-hidden="true" />
+                  </button>
+                </div>
+                <div className="dialog-detail-content-shell">
+                  <div
+                    ref={generateDialogDetailContentRef}
+                    className="dialog-detail-content"
+                    onScroll={syncGenerateDialogDetailViewport}
+                  >
+                    {generateDialogContent.detail}
                   </div>
-                  {generateDialogDetailExpanded ? (
-                    <div className="dialog-detail-content">{generateDialogContent.detail}</div>
+                  {generateDialogDetailHasOverflow && !generateDialogDetailAtBottom ? (
+                    <div className="dialog-detail-fade" aria-hidden="true" />
                   ) : null}
                 </div>
-              ) : null}
+              </div>
             </div>
-            <div className="dialog-actions">
-              <button className="chip-button is-active" onClick={() => setGenerateDialog(null)} type="button">
-                我知道了
-              </button>
-            </div>
-          </div>
-        </div>
+          ) : null}
+        </Dialog>
       ) : null}
 
       {saveNotice ? (

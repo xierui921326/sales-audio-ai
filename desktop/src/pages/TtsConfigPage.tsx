@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import Dialog from '../components/Dialog';
 import ConfigPlaceholder from '../components/config/ConfigPlaceholder';
 import ConfigSelect from '../components/config/ConfigSelect';
 import { logger } from '../utils/logger';
@@ -441,20 +442,18 @@ export default function TtsConfigPage({ config, setConfig, savedConfigSnapshot, 
       </section>
 
       {saveDialog ? (
-        <div className="dialog-overlay" onClick={() => setSaveDialog(null)}>
-          <div className="dialog-card" onClick={e => e.stopPropagation()}>
-            <div className={`dialog-badge dialog-badge--${saveDialog.tone}`}>
-              {saveDialog.tone === 'info' ? '提示' : '错误'}
-            </div>
-            <div className="dialog-title">{saveDialog.title}</div>
-            <div className="dialog-text">{saveDialog.text}</div>
-            <div className="dialog-actions">
-              <button className="chip-button is-active" onClick={() => setSaveDialog(null)} type="button">
-                我知道了
-              </button>
-            </div>
-          </div>
-        </div>
+        <Dialog
+          tone={saveDialog.tone}
+          title={saveDialog.title}
+          description={saveDialog.text}
+          onClose={() => setSaveDialog(null)}
+          size="compact"
+          actions={(
+            <button className="chip-button is-active" onClick={() => setSaveDialog(null)} type="button">
+              我知道了
+            </button>
+          )}
+        />
       ) : null}
     </div>
   );

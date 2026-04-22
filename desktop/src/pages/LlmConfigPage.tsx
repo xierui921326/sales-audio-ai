@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import Dialog from '../components/Dialog';
 import ConfigPlaceholder from '../components/config/ConfigPlaceholder';
 import ConfigSelect from '../components/config/ConfigSelect';
 import { logger } from '../utils/logger';
@@ -414,34 +415,24 @@ export default function LlmConfigPage({ config, setConfig, savedConfigSnapshot, 
       </section>
 
       {modelFetchDialog ? (
-        <div
-          className="dialog-overlay"
-          onClick={modelFetchDialog.mode === 'result' ? () => setModelFetchDialog(null) : undefined}
-        >
-          <div className="dialog-card" onClick={e => e.stopPropagation()}>
-            <div className={`dialog-badge dialog-badge--${modelFetchDialog.tone}`}>
-              {modelFetchDialog.tone === 'success' ? '成功' : modelFetchDialog.tone === 'info' ? '提示' : '错误'}
-            </div>
-            <div className="dialog-title">{modelFetchDialog.title}</div>
-            <div className="dialog-text">
-              {modelFetchDialog.mode === 'loading' ? (
-                <span className="dialog-loading-inline">
-                  <span className="dialog-loading-spinner" aria-hidden="true" />
-                  <span>{modelFetchDialog.text}</span>
-                </span>
-              ) : (
-                modelFetchDialog.text
-              )}
-            </div>
-            {modelFetchDialog.mode === 'result' ? (
-              <div className="dialog-actions">
-                <button className="chip-button is-active" onClick={() => setModelFetchDialog(null)} type="button">
-                  我知道了
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </div>
+        <Dialog
+          tone={modelFetchDialog.tone}
+          title={modelFetchDialog.title}
+          description={modelFetchDialog.mode === 'loading' ? (
+            <span className="dialog-loading-inline">
+              <span className="dialog-loading-spinner" aria-hidden="true" />
+              <span>{modelFetchDialog.text}</span>
+            </span>
+          ) : modelFetchDialog.text}
+          onClose={modelFetchDialog.mode === 'result' ? () => setModelFetchDialog(null) : undefined}
+          closeOnOverlay={modelFetchDialog.mode === 'result'}
+          size="compact"
+          actions={modelFetchDialog.mode === 'result' ? (
+            <button className="chip-button is-active" onClick={() => setModelFetchDialog(null)} type="button">
+              我知道了
+            </button>
+          ) : null}
+        />
       ) : null}
     </div>
   );
