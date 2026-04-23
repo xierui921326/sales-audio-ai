@@ -233,6 +233,13 @@ export default function TtsConfigPage({ config, setConfig, savedConfigSnapshot, 
 
   const allowBaseUrlEdit = !!activeEndpoint && !isEdgePreset;
 
+  function updateAudioSegmentPauseMs(value: string) {
+    const parsed = Number.parseInt(value, 10);
+    const nextValue = Number.isFinite(parsed) ? Math.max(0, Math.min(2000, parsed)) : 0;
+    setConfig(prev => ({ ...prev, audioSegmentPauseMs: nextValue }));
+    setSaveDialog(null);
+  }
+
   return (
     <div className="layout-split animate-slide-up">
       <aside className="sub-sidebar">
@@ -427,6 +434,23 @@ export default function TtsConfigPage({ config, setConfig, savedConfigSnapshot, 
                         />
                       )}
                     </div>
+                  </div>
+                </div>
+
+                <div className="group-card config-form-stack__group-card">
+                  <div className="field-block">
+                    <label>段间停顿时长（毫秒）</label>
+                    <input
+                      className="field-control"
+                      type="number"
+                      min={0}
+                      max={2000}
+                      step={50}
+                      value={config.audioSegmentPauseMs}
+                      onChange={e => updateAudioSegmentPauseMs(e.target.value)}
+                      placeholder="300"
+                    />
+                    <div className="field-helper-text">用于控制每段对话音频之间的停顿，`0` 表示直接衔接，默认 `300ms`。</div>
                   </div>
                 </div>
 

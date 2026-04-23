@@ -127,6 +127,7 @@ export interface AppConfig {
     activePromptId: string;
 
     audioDir: string;
+    audioSegmentPauseMs: number;
     databasePath: string;
     configFile: string;
 

@@ -117,6 +117,8 @@ struct AppConfig {
 
     #[serde(default)]
     audio_dir: String,
+    #[serde(default = "default_audio_segment_pause_ms")]
+    audio_segment_pause_ms: u32,
     #[serde(default)]
     database_path: String,
     #[serde(default)]
@@ -195,6 +197,17 @@ struct GenerateAudioOutput {
     task: AudioGenerationTaskItem,
     audio_files: Vec<AudioFileItem>,
     merged_file: Option<AudioFileItem>,
+}
+
+const AUDIO_SEGMENT_DEFAULT_PAUSE_MS: u32 = 300;
+const AUDIO_SEGMENT_MAX_PAUSE_MS: u32 = 2000;
+
+fn default_audio_segment_pause_ms() -> u32 {
+    AUDIO_SEGMENT_DEFAULT_PAUSE_MS
+}
+
+fn normalize_audio_segment_pause_ms(value: u32) -> u32 {
+    value.min(AUDIO_SEGMENT_MAX_PAUSE_MS)
 }
 
 const AUDIO_TASK_STATUS_PENDING: &str = "pending";
@@ -885,7 +898,8 @@ async fn list_tts_voices_inner(app: &AppHandle, config: &AppConfig) -> Result<Ve
     Ok(voices)
 }
 
-const AUDIO_SEGMENT_EDGE_FADE_MS: u32 = 12;
+const AUDIO_SEGMENT_EDGE_FADE_MS: u32 = 18;
+const AUDIO_SEGMENT_MP3_HEAD_TRIM_MS: u32 = 18;
 const AUDIO_SEGMENT_MAX_LEADING_TRIM_MS: u32 = 80;
 const AUDIO_SEGMENT_LEADING_SILENCE_THRESHOLD: u16 = 128;
 
@@ -975,6 +989,17 @@ fn frame_count_for_duration_ms(spec: &hound::WavSpec, duration_ms: u32) -> usize
     (((spec.sample_rate as u64) * (duration_ms as u64)) / 1000) as usize
 }
 
+fn trim_segment_head(mut samples: Vec<i16>, spec: &hound::WavSpec, duration_ms: u32) -> Vec<i16> {
+    let channels = usize::from(spec.channels.max(1));
+    let trim_samples = frame_count_for_duration_ms(spec, duration_ms) * channels;
+    if trim_samples == 0 || trim_samples >= samples.len() {
+        return samples;
+    }
+
+    samples.drain(..trim_samples);
+    samples
+}
+
 fn trim_segment_leading_silence(mut samples: Vec<i16>, spec: &hound::WavSpec) -> Vec<i16> {
     let channels = usize::from(spec.channels.max(1));
     let total_frames = samples.len() / channels;
@@ -1030,19 +1055,26 @@ fn apply_segment_edge_fade(samples: &mut [i16], spec: &hound::WavSpec) {
     }
 }
 
-fn merge_audio_segments_to_wav(path: &Path, chunks: &[Vec<u8>]) -> Result<(), String> {
+fn merge_audio_segments_to_wav(path: &Path, chunks: &[Vec<u8>], segment_pause_ms: u32) -> Result<(), String> {
     if chunks.is_empty() {
         return Err("没有可合并的音频片段".into());
     }
 
     let mut merged_samples = Vec::new();
     let mut target_spec: Option<hound::WavSpec> = None;
+    let normalized_segment_pause_ms = normalize_audio_segment_pause_ms(segment_pause_ms);
 
-    for chunk in chunks {
-        let (spec, samples) = if is_mp3_audio(chunk) {
+    for (index, chunk) in chunks.iter().enumerate() {
+        let is_mp3 = is_mp3_audio(chunk);
+        let (spec, samples) = if is_mp3 {
             decode_mp3_to_wav_samples(chunk)?
         } else {
             decode_wav_to_samples(chunk)?
+        };
+        let samples = if is_mp3 {
+            trim_segment_head(samples, &spec, AUDIO_SEGMENT_MP3_HEAD_TRIM_MS)
+        } else {
+            samples
         };
         let mut normalized_samples = trim_segment_leading_silence(samples, &spec);
         apply_segment_edge_fade(&mut normalized_samples, &spec);
@@ -1052,6 +1084,10 @@ fn merge_audio_segments_to_wav(path: &Path, chunks: &[Vec<u8>]) -> Result<(), St
             }
         } else {
             target_spec = Some(spec);
+        }
+        if index > 0 && normalized_segment_pause_ms > 0 {
+            let pause_samples = frame_count_for_duration_ms(&spec, normalized_segment_pause_ms) * usize::from(spec.channels.max(1));
+            merged_samples.resize(merged_samples.len() + pause_samples, 0);
         }
         merged_samples.extend(normalized_samples);
     }
@@ -1925,7 +1961,7 @@ async fn process_audio_generation_task(
     }
 
     let merged_path = output_dir.join(format!("merged_{}.wav", current_task.batch_id));
-    merge_audio_segments_to_wav(&merged_path, &chunks)?;
+    merge_audio_segments_to_wav(&merged_path, &chunks, config.audio_segment_pause_ms)?;
     let merged_file = build_merged_audio_file(&current_task, &merged_path);
     persist_audio_record(app, &current_task.batch_id, &merged_file)?;
     write_backend_log(
@@ -2261,6 +2297,7 @@ fn default_config(app: &AppHandle) -> Result<AppConfig, String> {
         }],
         active_prompt_id: "default-prompt".into(),
         audio_dir: default_audio_dir(app)?,
+        audio_segment_pause_ms: default_audio_segment_pause_ms(),
         database_path: resolved_database_path(app)?,
         config_file: resolved_config_file(),
         ..Default::default()
@@ -2322,6 +2359,7 @@ fn normalize_config_paths(app: &AppHandle, config: &mut AppConfig) -> Result<(),
             config.audio_dir = normalized_candidate.to_string_lossy().to_string();
         }
     }
+    config.audio_segment_pause_ms = normalize_audio_segment_pause_ms(config.audio_segment_pause_ms);
     config.database_path = resolved_database_path(app)?;
     config.config_file = resolved_config_file();
     Ok(())
@@ -3523,6 +3561,7 @@ async fn save_config(app: AppHandle, config: AppConfig) -> Result<AppConfig, Str
         let mut workspace = ensure_workspace(&app)?;
         workspace.config = config.clone();
         ensure_prompt_defaults(&mut workspace);
+        normalize_config_paths(&app, &mut workspace.config)?;
         save_workspace(&app, &workspace)?;
         Ok(workspace.config)
     })

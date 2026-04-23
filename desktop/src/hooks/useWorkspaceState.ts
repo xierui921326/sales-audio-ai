@@ -10,6 +10,7 @@ const DEFAULT_CONFIG: AppConfig = {
   ttsEndpoints: [],
   activePromptId: '',
   audioDir: '',
+  audioSegmentPauseMs: 300,
   databasePath: '',
   configFile: '',
 };
