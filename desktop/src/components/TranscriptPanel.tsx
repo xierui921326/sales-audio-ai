@@ -8,14 +8,14 @@ interface Props {
 
 export default function TranscriptPanel({ transcript, recordingState }: Props) {
     const bottomRef = useRef<HTMLDivElement>(null);
+    const isProcessing = recordingState === 'processing';
 
     // 新对话进来后自动滚到底部，避免用户每次生成后还要手动下拉查看最新内容。
     useEffect(() => {
-        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [transcript]);
+        bottomRef.current?.scrollIntoView({ behavior: isProcessing ? 'auto' : 'smooth', block: 'end' });
+    }, [isProcessing, transcript]);
 
     const isEmpty = transcript.length === 0;
-    const isProcessing = recordingState === 'processing';
 
     return (
         <div className="transcript-panel">

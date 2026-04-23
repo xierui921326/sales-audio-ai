@@ -153,6 +153,33 @@ function buildDisplayTranscript(transcript: TranscriptSegment[], streamingText: 
   return merged;
 }
 
+function getNextStreamingDisplayChunk(remainingText: string): string {
+  return (
+    remainingText.match(/^\s+/)?.[0] ??
+    remainingText.match(/^[，。！？：；,.!?;]+/)?.[0] ??
+    remainingText.match(/^[0-9A-Za-z]{1,2}/)?.[0] ??
+    remainingText.match(/^[^\s，。！？：；,.!?;\n]{1}/u)?.[0] ??
+    remainingText[0] ??
+    ''
+  );
+}
+
+function getStreamingDisplayDelay(nextChunk: string): number {
+  if (!nextChunk) {
+    return 0;
+  }
+  if (/^\s+$/.test(nextChunk)) {
+    return 60;
+  }
+  if (/^[，。！？：；,.!?;]+$/.test(nextChunk)) {
+    return 96;
+  }
+  if (/^[0-9A-Za-z]+$/.test(nextChunk)) {
+    return 68;
+  }
+  return nextChunk.length >= 2 ? 90 : 78;
+}
+
 type GenerateDialogState = {
   title: string;
   text: string;
@@ -668,30 +695,9 @@ export default function App() {
     }
 
     const remainingText = streamingText.slice(displayStreamingText.length);
-    const nextChar = remainingText[0] ?? '';
-    const prevChar = displayStreamingText[displayStreamingText.length - 1] ?? '';
-    const isSentenceBreak = /[，。！？：；,.!?;\n]/.test(prevChar);
-    const isClauseStart = displayStreamingText.length === 0 || isSentenceBreak;
-    const nextChunk =
-      remainingText.match(/^\s+/)?.[0] ??
-      remainingText.match(/^[，。！？：；,.!?;]+/)?.[0] ??
-      remainingText.match(/^[0-9A-Za-z]{1,4}/)?.[0] ??
-      remainingText.match(/^[^\s，。！？：；,.!?;\n]{1,2}/u)?.[0] ??
-      nextChar;
+    const nextChunk = getNextStreamingDisplayChunk(remainingText);
     const nextLength = Math.min(streamingText.length, displayStreamingText.length + nextChunk.length);
-
-    let delay = 74;
-    if (isClauseStart) {
-      delay = 190;
-    } else if (/^[，。！？：；,.!?;]+$/.test(nextChunk)) {
-      delay = 146;
-    } else if (/^\s+$/.test(nextChunk)) {
-      delay = 96;
-    } else if (/^[0-9A-Za-z]+$/.test(nextChunk)) {
-      delay = 88;
-    } else if (nextChunk.length === 2) {
-      delay = 82;
-    }
+    const delay = getStreamingDisplayDelay(nextChunk);
 
     const timer = window.setTimeout(() => {
       setDisplayStreamingText(streamingText.slice(0, nextLength));

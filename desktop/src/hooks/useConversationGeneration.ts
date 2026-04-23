@@ -53,6 +53,37 @@ export function useConversationGeneration({
 }: UseConversationGenerationOptions): UseConversationGenerationResult {
   const generateRequestIdRef = useRef<string | null>(null);
   const generateListenersRef = useRef<UnlistenFn[]>([]);
+  const pendingStreamingDeltaRef = useRef('');
+  const streamingFlushFrameRef = useRef<number | null>(null);
+
+  function resetStreamingBuffer() {
+    pendingStreamingDeltaRef.current = '';
+    if (streamingFlushFrameRef.current !== null) {
+      window.cancelAnimationFrame(streamingFlushFrameRef.current);
+      streamingFlushFrameRef.current = null;
+    }
+  }
+
+  function flushPendingStreamingText() {
+    streamingFlushFrameRef.current = null;
+    const pendingDelta = pendingStreamingDeltaRef.current;
+    if (!pendingDelta) {
+      return;
+    }
+
+    pendingStreamingDeltaRef.current = '';
+    setStreamingText(current => current + pendingDelta);
+  }
+
+  function scheduleStreamingTextFlush() {
+    if (streamingFlushFrameRef.current !== null) {
+      return;
+    }
+
+    streamingFlushFrameRef.current = window.requestAnimationFrame(() => {
+      flushPendingStreamingText();
+    });
+  }
 
   function clearGenerateListeners() {
     const listeners = generateListenersRef.current;
@@ -66,6 +97,7 @@ export function useConversationGeneration({
 
   useEffect(() => {
     return () => {
+      resetStreamingBuffer();
       clearGenerateListeners();
     };
   }, []);
@@ -73,6 +105,7 @@ export function useConversationGeneration({
   async function handleGenerateConversation(params: GenerateConversationInput) {
     const requestId = createRequestId();
     generateRequestIdRef.current = requestId;
+    resetStreamingBuffer();
     clearGenerateListeners();
     setBusy(current => ({ ...current, generatingConversation: true }));
     setGenerateDialog(null);
@@ -86,6 +119,7 @@ export function useConversationGeneration({
           if (event.payload.requestId !== generateRequestIdRef.current) {
             return;
           }
+          resetStreamingBuffer();
           setStreamingText('');
           setDisplayStreamingText('');
           logger.info('generate', '开始接收流式对话', { rounds: event.payload.rounds, requestId: event.payload.requestId });
@@ -94,7 +128,8 @@ export function useConversationGeneration({
           if (event.payload.requestId !== generateRequestIdRef.current) {
             return;
           }
-          setStreamingText(current => current + event.payload.textDelta);
+          pendingStreamingDeltaRef.current += event.payload.textDelta;
+          scheduleStreamingTextFlush();
         }),
         listen<ConversationDeltaEvent>(CONVERSATION_DELTA_EVENT, event => {
           if (event.payload.requestId !== generateRequestIdRef.current) {
@@ -106,6 +141,8 @@ export function useConversationGeneration({
           if (event.payload.requestId !== generateRequestIdRef.current) {
             return;
           }
+          flushPendingStreamingText();
+          resetStreamingBuffer();
           setTranscript(event.payload.transcript);
           setStreamingText('');
           setDisplayStreamingText('');
@@ -118,6 +155,7 @@ export function useConversationGeneration({
           if (event.payload.requestId !== generateRequestIdRef.current) {
             return;
           }
+          resetStreamingBuffer();
           setTranscript([]);
           setStreamingText('');
           setDisplayStreamingText('');
@@ -147,6 +185,7 @@ export function useConversationGeneration({
       }
       logger.info('generate', '生成对话成功', { transcriptSize: result.transcript.length, requestId });
     } catch (err) {
+      resetStreamingBuffer();
       setTranscript([]);
       setStreamingText('');
       setDisplayStreamingText('');
@@ -157,6 +196,7 @@ export function useConversationGeneration({
         tone: 'error',
       });
     } finally {
+      resetStreamingBuffer();
       if (generateRequestIdRef.current === requestId) {
         setStreamingText('');
         setDisplayStreamingText('');
